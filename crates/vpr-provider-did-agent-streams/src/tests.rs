@@ -507,70 +507,26 @@ fn expressive_without_server_echo_fails_closed_before_session_creation() {
 }
 
 #[test]
-fn did_v2_livekit_close_uses_authenticated_exact_session_delete() {
-    let (endpoint, captured) = serve(vec![("204 No Content", String::new())]);
-    let provider = adapter(endpoint);
-    let session = RealtimeAvatarSession {
-        provider_resource_id: "session-7".to_owned(),
-        provider_session_id: "session-7".to_owned(),
-        transport: RealtimeAvatarTransport::LiveKit {
-            server_url: "wss://livekit.example.test".to_owned(),
-            token: "viewer-token-must-not-be-forwarded".to_owned(),
-        },
-    };
-
-    provider.close_session(&session).unwrap();
-
-    let request = captured.recv().unwrap();
-    assert!(request.starts_with("DELETE /v2/agents/sessions/session-7 "));
-    assert!(
-        request
-            .to_ascii_lowercase()
-            .contains("authorization: basic secret-key")
-    );
-    assert!(!request.contains("viewer-token-must-not-be-forwarded"));
-}
-
-#[test]
-fn did_v2_livekit_close_keeps_404_and_non_204_success_unconfirmed() {
-    for (status, body) in [("404 Not Found", "{}"), ("200 OK", "{}")] {
-        let (endpoint, captured) = serve(vec![(status, body.to_owned())]);
-        let provider = adapter(endpoint);
-        let session = RealtimeAvatarSession {
-            provider_resource_id: "session-8".to_owned(),
-            provider_session_id: "session-8".to_owned(),
-            transport: RealtimeAvatarTransport::LiveKit {
-                server_url: "wss://livekit.example.test".to_owned(),
-                token: "viewer-token".to_owned(),
-            },
-        };
-
-        let error = provider.close_session(&session).unwrap_err();
-        assert_eq!(error.kind, ProviderErrorKind::Unavailable);
-        assert!(error.retryable);
-        assert!(
-            captured
-                .recv()
-                .unwrap()
-                .starts_with("DELETE /v2/agents/sessions/session-8 ")
-        );
-    }
-}
-
-#[test]
-fn did_v2_livekit_close_rejects_mismatched_resource_and_session_ids() {
+fn did_v2_livekit_close_without_echo_never_claims_remote_stop() {
+    // A stale LiveKit session can still be reachable at D-ID after the
+    // viewer disconnects. No backend STOP exists to acknowledge here.
     let provider = adapter("http://127.0.0.1:1".to_owned());
-    let session = RealtimeAvatarSession {
-        provider_resource_id: "different-resource".to_owned(),
-        provider_session_id: "session-9".to_owned(),
+    let stale = RealtimeAvatarSession {
+        provider_resource_id: "old-livekit".to_owned(),
+        provider_session_id: "old-livekit".to_owned(),
         transport: RealtimeAvatarTransport::LiveKit {
             server_url: "wss://livekit.example.test".to_owned(),
             token: "viewer-token".to_owned(),
         },
     };
-
-    let error = provider.close_session(&session).unwrap_err();
-    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
+    let result = provider.close_session(&stale).unwrap_err();
+    assert_eq!(result.kind, ProviderErrorKind::Unavailable);
+    assert!(!result.retryable);
+    // Repeat cannot silently convert an unconfirmed remote STOP to success.
+    assert_eq!(
+        provider.close_session(&stale).unwrap_err().kind,
+        ProviderErrorKind::Unavailable
+    );
 }
 
 #[test]
@@ -983,7 +939,6 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     let (endpoint, captured) = serve(vec![
         ("200 OK", expressive_agent_body()),
         ("201 Created", body.to_owned()),
-        ("204 No Content", String::new()),
     ]);
     let backend = Arc::new(MockEchoBackend::default());
     let provider = adapter(endpoint).with_echo_backend(backend.clone());
@@ -1033,13 +988,6 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     // command, nor any extra utterance.
     provider.interrupt(&session, &probe).unwrap();
     provider.close_session(&session).unwrap();
-    let deleted = captured.recv().unwrap();
-    assert!(deleted.starts_with("DELETE /v2/agents/sessions/echo-session-1 "));
-    assert!(
-        deleted
-            .to_ascii_lowercase()
-            .contains("authorization: basic secret-key")
-    );
     assert!(provider.interrupt(&session, &probe).is_err());
     assert!(
         provider
@@ -1054,197 +1002,6 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
 }
 
 #[test]
-fn did_v2_echo_close_retries_provider_delete_after_local_sender_stop() {
-    use std::sync::Arc;
-
-    let body = r#"{"id":"echo-session-1","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
-    let (endpoint, captured) = serve(vec![
-        ("200 OK", expressive_agent_body()),
-        ("201 Created", body.to_owned()),
-        ("503 Service Unavailable", "{}".to_owned()),
-        ("204 No Content", String::new()),
-    ]);
-    let backend = Arc::new(MockEchoBackend::default());
-    let provider = adapter(endpoint).with_echo_backend(backend.clone());
-    let probe = Probe(AtomicBool::new(false));
-    let session = provider.create_session(&probe).unwrap();
-    let _ = captured.recv().unwrap();
-    let _ = captured.recv().unwrap();
-
-    let first = provider.close_session(&session).unwrap_err();
-    assert_eq!(first.kind, ProviderErrorKind::Unavailable);
-    assert!(first.retryable);
-
-    // Local Echo STOP already succeeded. A provider DELETE retry must still
-    // run, but must not reopen or stop the private sender a second time.
-    provider.close_session(&session).unwrap();
-    let first_delete = captured.recv().unwrap();
-    let retry_delete = captured.recv().unwrap();
-    assert!(first_delete.starts_with("DELETE /v2/agents/sessions/echo-session-1 "));
-    assert!(retry_delete.starts_with("DELETE /v2/agents/sessions/echo-session-1 "));
-    assert_eq!(*backend.calls.lock().unwrap(), vec!["open", "stop"]);
-}
-
-#[test]
-fn revoke_during_v2_create_body_read_compensates_exact_session_id() {
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicUsize;
-
-    struct RevokeAtFinalCheck(AtomicUsize);
-    impl CancellationProbe for RevokeAtFinalCheck {
-        fn is_cancelled(&self) -> bool {
-            self.0.fetch_add(1, Ordering::SeqCst) >= 2
-        }
-    }
-
-    let body = r#"{"id":"echo-late-session","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
-    let (endpoint, captured) = serve(vec![
-        ("200 OK", expressive_agent_body()),
-        ("201 Created", body.to_owned()),
-        ("204 No Content", String::new()),
-    ]);
-    let backend = Arc::new(MockEchoBackend::default());
-    let provider = adapter(endpoint).with_echo_backend(backend.clone());
-
-    let error = provider
-        .create_session(&RevokeAtFinalCheck(AtomicUsize::new(0)))
-        .unwrap_err();
-    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
-    assert!(backend.calls.lock().unwrap().is_empty());
-
-    assert!(
-        captured
-            .recv_timeout(std::time::Duration::from_secs(3))
-            .unwrap()
-            .starts_with("GET /agents/agent-7 ")
-    );
-    assert!(
-        captured
-            .recv_timeout(std::time::Duration::from_secs(3))
-            .unwrap()
-            .starts_with("POST /v2/agents/agent-7/sessions ")
-    );
-    assert!(
-        captured
-            .recv_timeout(std::time::Duration::from_secs(3))
-            .unwrap()
-            .starts_with("DELETE /v2/agents/sessions/echo-late-session ")
-    );
-}
-
-#[test]
-fn malformed_v2_create_with_recoverable_id_is_compensated() {
-    use std::sync::Arc;
-
-    let malformed = r#"{"id":"echo-schema-orphan","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token"}"#;
-    let (endpoint, captured) = serve(vec![
-        ("200 OK", expressive_agent_body()),
-        ("201 Created", malformed.to_owned()),
-        ("204 No Content", String::new()),
-    ]);
-    let backend = Arc::new(MockEchoBackend::default());
-    let provider = adapter(endpoint).with_echo_backend(backend.clone());
-
-    let error = provider
-        .create_session(&Probe(AtomicBool::new(false)))
-        .unwrap_err();
-    assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
-    assert!(backend.calls.lock().unwrap().is_empty());
-    let _ = captured
-        .recv_timeout(std::time::Duration::from_secs(3))
-        .unwrap();
-    let _ = captured
-        .recv_timeout(std::time::Duration::from_secs(3))
-        .unwrap();
-    assert!(
-        captured
-            .recv_timeout(std::time::Duration::from_secs(3))
-            .unwrap()
-            .starts_with("DELETE /v2/agents/sessions/echo-schema-orphan ")
-    );
-}
-
-#[test]
-fn failed_v2_create_compensation_remains_unconfirmed() {
-    use std::sync::Arc;
-
-    let malformed = r#"{"id":"echo-schema-orphan","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token"}"#;
-    let (endpoint, captured) = serve(vec![
-        ("200 OK", expressive_agent_body()),
-        ("201 Created", malformed.to_owned()),
-        ("503 Service Unavailable", "{}".to_owned()),
-    ]);
-    let backend = Arc::new(MockEchoBackend::default());
-    let provider = adapter(endpoint).with_echo_backend(backend);
-
-    let error = provider
-        .create_session(&Probe(AtomicBool::new(false)))
-        .unwrap_err();
-    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
-    assert!(error.retryable);
-    let _ = captured
-        .recv_timeout(std::time::Duration::from_secs(3))
-        .unwrap();
-    let _ = captured
-        .recv_timeout(std::time::Duration::from_secs(3))
-        .unwrap();
-    assert!(
-        captured
-            .recv_timeout(std::time::Duration::from_secs(3))
-            .unwrap()
-            .starts_with("DELETE /v2/agents/sessions/echo-schema-orphan ")
-    );
-}
-
-#[test]
-fn ambiguous_v2_create_timeout_is_not_marked_retryable() {
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let endpoint = format!("http://{}", listener.local_addr().unwrap());
-    let (tx, captured) = mpsc::channel();
-    thread::spawn(move || {
-        let (mut first, _) = listener.accept().unwrap();
-        tx.send(read_request(&mut first)).unwrap();
-        let body = expressive_agent_body();
-        let headers = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        );
-        first.write_all(headers.as_bytes()).unwrap();
-        first.write_all(body.as_bytes()).unwrap();
-
-        let (mut second, _) = listener.accept().unwrap();
-        tx.send(read_request(&mut second)).unwrap();
-        thread::sleep(Duration::from_millis(300));
-        let late = r#"{"id":"echo-created-after-timeout","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
-        let headers = format!(
-            "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            late.len()
-        );
-        let _ = second.write_all(headers.as_bytes());
-        let _ = second.write_all(late.as_bytes());
-    });
-
-    let provider = DidAgentStreamsAvatar::new(
-        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7")
-            .with_timeout(Duration::from_millis(100)),
-    )
-    .unwrap()
-    .with_echo_backend(Arc::new(MockEchoBackend::default()));
-
-    let error = provider
-        .create_session(&Probe(AtomicBool::new(false)))
-        .unwrap_err();
-    assert_eq!(error.kind, ProviderErrorKind::Timeout);
-    assert!(!error.retryable);
-    let _ = captured.recv_timeout(Duration::from_secs(3)).unwrap();
-    let _ = captured.recv_timeout(Duration::from_secs(3)).unwrap();
-    assert!(captured.try_recv().is_err());
-}
-
-#[test]
 fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first() {
     use std::sync::Arc;
 
@@ -1254,7 +1011,6 @@ fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first()
         ("201 Created", body.to_owned()),
         ("200 OK", expressive_agent_body()),
         ("201 Created", body.to_owned()),
-        ("204 No Content", String::new()),
     ]);
     let backend = Arc::new(MockEchoBackend::default());
     let provider = adapter(endpoint).with_echo_backend(backend.clone());
@@ -1319,10 +1075,9 @@ fn echo_start_cancelled_during_open_stops_private_sender_and_returns_no_session(
     use std::sync::Arc;
 
     let body = r#"{"id":"echo-session-1","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
-    let (endpoint, captured) = serve(vec![
+    let (endpoint, _captured) = serve(vec![
         ("200 OK", expressive_agent_body()),
         ("201 Created", body.to_owned()),
-        ("204 No Content", String::new()),
     ]);
     let cancellation = Arc::new(Probe(AtomicBool::new(false)));
     let backend = Arc::new(CancelledDuringEchoOpen {
@@ -1335,24 +1090,6 @@ fn echo_start_cancelled_during_open_stops_private_sender_and_returns_no_session(
     assert_eq!(error.kind, ProviderErrorKind::Cancelled);
     assert_eq!(*backend.calls.lock().unwrap(), vec!["open", "stop"]);
     assert!(!provider.echo_sessions.contains("echo-session-1").unwrap());
-    assert!(
-        captured
-            .recv_timeout(std::time::Duration::from_secs(3))
-            .unwrap()
-            .starts_with("GET /agents/agent-7 ")
-    );
-    assert!(
-        captured
-            .recv_timeout(std::time::Duration::from_secs(3))
-            .unwrap()
-            .starts_with("POST /v2/agents/agent-7/sessions ")
-    );
-    assert!(
-        captured
-            .recv_timeout(std::time::Duration::from_secs(3))
-            .unwrap()
-            .starts_with("DELETE /v2/agents/sessions/echo-session-1 ")
-    );
 }
 
 #[test]
@@ -1362,7 +1099,6 @@ fn echo_requires_a_real_sender_token_and_never_falls_back_to_browser_speak() {
     let (endpoint, captured) = serve(vec![
         ("200 OK", expressive_agent_body()),
         ("201 Created", r#"{"id":"echo-session-1","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token"}"#.to_owned()),
-        ("204 No Content", String::new()),
     ]);
     let backend = Arc::new(MockEchoBackend::default());
     let provider = adapter(endpoint).with_echo_backend(backend.clone());
@@ -1377,12 +1113,6 @@ fn echo_requires_a_real_sender_token_and_never_falls_back_to_browser_speak() {
             .recv()
             .unwrap()
             .contains(r#""session_type":"echo""#)
-    );
-    assert!(
-        captured
-            .recv()
-            .unwrap()
-            .starts_with("DELETE /v2/agents/sessions/echo-session-1 ")
     );
 }
 
@@ -1637,4 +1367,44 @@ fn failed_compensation_of_invalid_offer_is_never_reported_as_clean() {
             .unwrap()
             .starts_with("DELETE /agents/agent-7/streams/stream-orphan ")
     );
+}
+
+
+#[test]
+fn did_v2_echo_local_stop_does_not_claim_remote_session_stop() {
+    use std::sync::Arc;
+
+    let (endpoint, captured) = serve(vec![("204 No Content", String::new())]);
+    let backend = Arc::new(MockEchoBackend::default());
+    let provider = adapter(endpoint).with_echo_backend(backend.clone());
+    let probe = Probe(AtomicBool::new(false));
+    provider
+        .echo_sessions
+        .open_session(
+            backend.as_ref(),
+            "echo-session-1",
+            "wss://livekit.example.test/room/agent-echo",
+            "server-ONLY-echo-token",
+            &probe,
+        )
+        .unwrap();
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "echo-session-1".to_owned(),
+        provider_session_id: "echo-session-1".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+
+    let error = provider.close_session(&session).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
+    assert_eq!(
+        *backend.calls.lock().unwrap(),
+        vec!["open".to_owned(), "stop".to_owned()]
+    );
+    assert!(!provider.echo_sessions.contains("echo-session-1").unwrap());
+    // Local Echo STOP must not be followed by an invented V2 DELETE request.
+    assert!(captured.try_recv().is_err());
 }
