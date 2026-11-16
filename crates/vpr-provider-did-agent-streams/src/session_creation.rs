@@ -59,10 +59,7 @@ impl DidAgentStreamsAvatar {
             // Close the private publisher before deleting the provider session.
             // If local STOP is uncertain, preserve the registry identity.
             self.echo_sessions
-                .close_session(
-                    backend,
-                    provider_session_id,
-                )
+                .close_session(backend, provider_session_id)
                 .map_err(|_| unavailable())?;
             self.compensate_v2_create(Some(provider_session_id))?;
             return Err(crate::cancelled());
@@ -158,12 +155,7 @@ impl DidAgentStreamsAvatar {
             return Err(crate::cancelled());
         }
 
-        self.open_private_echo_sender(
-            &provider_session_id,
-            &session_url,
-            &secret,
-            cancellation,
-        )?;
+        self.open_private_echo_sender(&provider_session_id, &session_url, &secret, cancellation)?;
         Ok(session)
     }
 }
