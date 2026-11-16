@@ -563,6 +563,10 @@ test("Expressive server resume is reauthorized and delivered through canonical E
 
 test("Expressive browser STOP failure revokes provider authority and closes viewer", async ({ page, request }) => {
   test.setTimeout(120000);
+  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
+  expect(bootstrap.ok()).toBeTruthy();
+  const csrf = String((await bootstrap.json()).csrf_token);
+  await setupReviewedPersona(request, csrf);
   const cleared = await request.delete(mailboxUrl);
   expect(cleared.ok()).toBeTruthy();
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
