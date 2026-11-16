@@ -10,7 +10,7 @@ use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
 use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
-use crate::state::{LabSignalBundle, LabVoiceResult, OwnerLabEngine, OwnerLabStartRequest};
+use crate::state::{LabSignalBundle, LabVoiceResult, OwnerLabEngine};
 
 #[path = "rt1_visitor_browser_delivery.rs"]
 mod browser_delivery;
