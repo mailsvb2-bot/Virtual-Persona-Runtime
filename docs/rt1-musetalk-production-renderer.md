@@ -109,6 +109,31 @@ does not eliminate malicious concurrent file replacement (TOCTOU).
   or invalid track denies new admission and/or fails the authorized media
   operation. No artificial successful receipt.
 
+## Real CUDA compute acceptance (not a browser release certificate)
+
+On the GPU host after installing operator-approved weights/assets and pinning
+`RT1_MUSETALK_AVATAR_SHA256`, run the production model itself, not a test
+renderer:
+
+```sh
+cd "$RT1_MUSETALK_ROOT"
+python /opt/Virtual-Persona-Runtime/scripts/rt1_musetalk_gpu_acceptance.py \\
+  --windows 50 --max-window-ms 400 \\
+  --output /var/lib/vpr/evidence/musetalk-gpu-compute-v1.json
+```
+
+The command warms the actual renderer and benchmarks fifty distinct 400 ms
+PCM inference windows with CUDA synchronization. It writes a *new* JSON file
+with processing throughput, worst and p95 latency, GPU type, hashed Persona
+identity and prepared-asset digest. A single window exceeding the deadline
+fails the command (exit code 2), rather than hiding overload behind an average.
+This is a sustained model compute probe, **not** proof of 25 fps delivered
+over WebRTC: compare real audio/video playout timestamps and independent STOP
+receipts on a physical browser/device before publication. The evidence always
+records `production_release_approved: false` to prevent promotion by this
+compute-only tool. The command never downloads models or sends video/PCM to
+an external provider.
+
 ## Remaining release gates
 
 This implementation has hermetic CI and local aiortc tests, **not** a
