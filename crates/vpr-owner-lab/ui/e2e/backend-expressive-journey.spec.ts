@@ -199,7 +199,7 @@ test.afterEach(async ({ request }) => {
   expect(evidence.session_sequence).toBeGreaterThan(0);
 });
 
-// // The fixture launches a real server-owned Echo worker with a hermetic
+// The fixture launches a real server-owned Echo worker with a hermetic
 // LiveKit transport. The browser must receive only a viewer token.
 test("Expressive Echo keeps its sender credentials private", async ({
   page,
