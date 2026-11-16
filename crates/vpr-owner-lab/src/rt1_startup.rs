@@ -57,8 +57,12 @@ fn worker_recovery_required(
     endpoint_present: bool,
     token_present: bool,
 ) -> Result<bool, &'static str> {
+    // Diagnostic and D-ID fixture routes may carry worker credentials in their
+    // environment but do not own a canonical worker operation.
+    if !selected {
+        return Ok(false);
+    }
     match (endpoint_present, token_present) {
-        (false, false) if !selected => Ok(false),
         (true, true) => Ok(true),
         _ => Err("RT1 worker recovery credentials are incomplete"),
     }
@@ -88,14 +92,15 @@ mod tests {
     }
 
     #[test]
-    fn worker_recovery_requires_both_credentials_when_selected_or_configured() {
+    fn worker_recovery_runs_only_for_selected_canonical_worker_and_requires_credentials() {
         use super::worker_recovery_required;
 
         assert_eq!(worker_recovery_required(false, false, false), Ok(false));
-        assert_eq!(worker_recovery_required(false, true, true), Ok(true));
+        assert_eq!(worker_recovery_required(false, true, true), Ok(false));
+        assert_eq!(worker_recovery_required(true, true, true), Ok(true));
         assert!(worker_recovery_required(true, false, false).is_err());
-        assert!(worker_recovery_required(false, true, false).is_err());
-        assert!(worker_recovery_required(false, false, true).is_err());
+        assert!(worker_recovery_required(true, true, false).is_err());
+        assert!(worker_recovery_required(true, false, true).is_err());
     }
 
 }
