@@ -36,6 +36,16 @@ class SenderTimeoutTests(unittest.TestCase):
         finally:
             backend.shutdown()
 
+    def test_shutdown_closes_provider_loop_and_is_idempotent(self):
+        backend = AiortcSenderBackend(timeout=0.2)
+        loop = backend._loop
+        thread = backend._thread
+        backend.shutdown()
+        self.assertTrue(loop.is_closed())
+        self.assertFalse(thread.is_alive())
+        backend.shutdown()
+        self.assertTrue(loop.is_closed())
+
     def test_owner_cancellation_interrupts_provider_wait_before_backend_deadline(self):
         backend = AiortcSenderBackend(timeout=2.0)
         started = threading.Event()
