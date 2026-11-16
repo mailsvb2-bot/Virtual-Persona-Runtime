@@ -74,7 +74,11 @@ class SyntheticPersonaSenderBackend(AiortcSenderBackend):
     def persona_identity(self) -> tuple[str, int]:
         # The browser E2E uses exactly this reviewed Persona revision.
         # It is a synthetic visual fixture, NEVER production GPU evidence.
-        return "rt1-worker-voice-browser-e2e", 2
+        # Each independently started browser suite pins its own reviewed
+        # Persona. Never infer a face identity from untrusted HTTP payload.
+        return os.environ.get(
+            "VPR_RT1_E2E_PERSONA_ID", "rt1-worker-voice-browser-e2e"
+        ), 2
 
     def push_pcm(
         self, operation_id: str, session_id: str, generation: int,
