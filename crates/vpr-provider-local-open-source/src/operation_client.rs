@@ -306,6 +306,10 @@ impl RemoteOperationClient {
     /// The final authorized fragment ends the current TTS utterance.
     /// The existing worker may then flush its incomplete 400 ms lip-sync
     /// window; it cannot guess the boundary from transport-idle timing.
+    ///
+    /// # Errors
+    /// Denies invalid or stale operation identities, malformed PCM, worker
+    /// rejection, ambiguous transport delivery or a revoked sender.
     pub fn push_pcm_final(&self, operation_id: &str, pcm: &[u8]) -> Result<(), ProviderError> {
         self.push_pcm_fragment(operation_id, pcm, true)
     }
