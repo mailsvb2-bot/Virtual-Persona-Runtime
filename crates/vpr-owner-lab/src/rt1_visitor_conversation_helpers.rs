@@ -15,7 +15,7 @@ pub(super) fn start_engine_with_provider_egress(
     interrupt: &Arc<LiveVisitorInterrupt>,
 ) -> Result<LabSignalBundle, String> {
     let _egress = manager.begin_provider_egress(session_id)?;
-    let startup_interrupt = Arc::clone(&interrupt);
+    let startup_interrupt = Arc::clone(interrupt);
     let started =
         engine.start_visitor_with_interrupt(OwnerLabStartRequest { consent }, move |handle| {
             *startup_interrupt.turn.lock() = Some(handle.clone());
