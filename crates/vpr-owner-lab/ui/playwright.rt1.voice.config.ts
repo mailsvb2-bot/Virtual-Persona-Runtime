@@ -9,6 +9,7 @@ export default defineConfig({
   // These browser-only race tests use explicit fake SDK/media objects. They
   // complement, but never substitute for, the local real-RTP worker journey.
   testMatch: [
+    "rt1-worker-owner-visitor-isolation.spec.ts",
     "rt1-worker-voice-journey.spec.ts",
     "rt1-late-livekit-connect.spec.ts",
     "rt1-late-microphone-revoke.spec.ts",
