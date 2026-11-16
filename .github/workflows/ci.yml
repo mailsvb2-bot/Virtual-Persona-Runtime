@@ -307,7 +307,22 @@ jobs:
         run: npm run build
       - name: Install Chromium
         run: npx playwright install chromium
-      - name: Backend-integrated Expressive LiveKit E2E
-        run: npm run test:e2e:expressive -- --grep-invert "Expressive server STOP cancels in-flight TTS and quarantines unconfirmed provider STOP"
+      - name: Isolated backend-integrated Expressive LiveKit E2E cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          cases=(
+            "Expressive Echo keeps its sender credentials private"
+            "real browser owner voice reaches private server Echo audio"
+            "Expressive server Echo publishes synthesized voice without browser did.speak"
+            "Expressive server STOP is sent from backend and prevents stale replay"
+            "Expressive server Echo closes privately on session revoke"
+            "second caller cannot restart speech after canonical revoke"
+            "Expressive server resume is reauthorized and delivered through canonical Echo"
+            "Expressive browser STOP failure revokes provider authority and closes viewer"
+          )
+          for title in "${cases[@]}"; do
+            npm run test:e2e:expressive -- --grep "$title"
+          done
       - name: Isolated in-flight TTS STOP and quarantine E2E
         run: npm run test:e2e:expressive -- --grep "Expressive server STOP cancels in-flight TTS and quarantines unconfirmed provider STOP"
