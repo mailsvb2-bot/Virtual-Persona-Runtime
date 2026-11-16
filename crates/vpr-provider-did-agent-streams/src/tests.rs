@@ -1432,7 +1432,7 @@ fn ambiguous_v2_create_timeout_is_not_marked_retryable() {
         let (mut second, _) = listener.accept().unwrap();
         tx.send(read_request(&mut second)).unwrap();
         thread::sleep(Duration::from_millis(300));
-        let late = r#"{\"id\":\"echo-created-after-timeout\",\"session_url\":\"wss://livekit.example.test/room/agent-echo\",\"session_token\":\"viewer-token\",\"echo_token\":\"server-ONLY-echo-token\"}"#;
+        let late = r#"{"id":"echo-created-after-timeout","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
         let headers = format!(
             "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             late.len()
