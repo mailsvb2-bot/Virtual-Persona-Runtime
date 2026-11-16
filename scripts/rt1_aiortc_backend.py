@@ -428,5 +428,13 @@ class AiortcSenderBackend:
             except Exception:
                 # Caller must inspect its durable ledger and retry reconciliation.
                 pass
-        self._loop.call_soon_threadsafe(self._loop.stop)
-        self._thread.join(timeout=self._timeout)
+        if self._thread.is_alive():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=self._timeout)
+        if self._thread.is_alive():
+            raise RuntimeError("aiortc provider event loop did not stop before deadline")
+        # A stopped loop still owns selector/socket resources until close().
+        # Make repeated worker start/stop cycles deterministic and avoid
+        # ResourceWarning from the abandoned event-loop object.
+        if not self._loop.is_closed():
+            self._loop.close()
