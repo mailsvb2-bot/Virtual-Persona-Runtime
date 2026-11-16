@@ -113,7 +113,14 @@ fn cancel_confirmed_until(
             .client
             .delete(url.clone())
             .bearer_auth(&client.token)
-            .json(&Generation { generation })
+            // STOP must survive Persona correction and owner rotation.
+            // Only CREATE is bound to current face assets; the durable
+            // operation/generation alone identifies the session to revoke.
+            .json(&Generation {
+                generation,
+                persona_id: None,
+                persona_version: None,
+            })
             .timeout(remaining)
             .send()
             .map_err(|_| denied())?;
