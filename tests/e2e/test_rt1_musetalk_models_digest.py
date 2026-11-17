@@ -9,7 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from rt1_musetalk_renderer import (
     MuseTalkRenderer, REQUIRED_MODEL_FILES, approved_model_digest,
-    prepared_avatar_digest,
+    prepared_avatar_digest, verify_upstream_source,
 )
 
 
@@ -55,6 +55,29 @@ class ModelWeightsPinContract(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "weights digest mismatch"):
                     MuseTalkRenderer(str(root), str(avatar),
                                      persona_id="persona-1", persona_version=1)
+
+    def test_live_source_gate_rejects_unpinned_and_changed_checkout(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, avatar = Path(temp) / "root", Path(temp) / "avatar"
+            stage(root, avatar)
+            with self.assertRaisesRegex(RuntimeError, "SOURCE_REVISION pin required"):
+                verify_upstream_source(root, "")
+            with patch("subprocess.check_output", return_value="b" * 40):
+                with self.assertRaisesRegex(RuntimeError, "revision differs"):
+                    verify_upstream_source(root, "a" * 40)
+            with patch("subprocess.check_output", side_effect=[
+                "a" * 40, "?? musetalk/utils/shadow.py"
+            ]) as git:
+                with self.assertRaisesRegex(RuntimeError, "untracked MuseTalk source"):
+                    verify_upstream_source(root, "a" * 40)
+                self.assertIn("--untracked-files=all", git.call_args_list[1].args[0])
+
+    def test_live_source_gate_accepts_reviewed_clean_checkout(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, avatar = Path(temp) / "root", Path(temp) / "avatar"
+            stage(root, avatar)
+            with patch("subprocess.check_output", side_effect=["a" * 40, ""]):
+                verify_upstream_source(root, "a" * 40)
 
     def test_unapproved_symlinked_model_is_not_hashed(self):
         with tempfile.TemporaryDirectory() as temp:
