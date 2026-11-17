@@ -224,6 +224,31 @@ STOP must still be tested separately. Reject a failure; never bypass it by
 allowing a diagnostic renderer to authorize a Persona. This preflight does
 not establish licensing, consent or safe artifact provenance by itself.
 
+## Single-command GPU-host acceptance (when NVIDIA is actually available)
+
+Use the EXISTING CPU checks, existing renderer and existing CUDA acceptance in
+one strict sequence. The runner installs nothing and cannot approve publication.
+On an independently approved NVIDIA host, after the isolated environment,
+licensed weights, authorized face and all pins have been provisioned:
+
+```sh
+# RT1_VIDEO_RENDERER, RT1_MUSETALK_ROOT, RT1_MUSETALK_AVATAR_DIR,
+# RT1_MUSETALK_SOURCE_REVISION, RT1_MUSETALK_MODELS_SHA256,
+# RT1_MUSETALK_AVATAR_SHA256, RT1_MUSETALK_PERSONA_ID and
+# RT1_MUSETALK_PERSONA_VERSION must already be set by deployment config.
+mkdir -m 700 -p "$HOME/vpr-rt1-evidence"
+bash /opt/Virtual-Persona-Runtime/scripts/rt1_musetalk_hardware_acceptance.sh \\
+  "$HOME/vpr-rt1-evidence/musetalk-compute-001.json"
+```
+
+Run from the reviewed Python 3.10 environment and with a GPU driver visible
+to `nvidia-smi`. Stop immediately if any stage fails: environment audit,
+upstream SHA/clean tree, approved model/avatar digests, real CUDA warmup or
+50-window worst-case deadline. The output path must not already exist. This
+is **only a compute acceptance**; browser RTP synchronization, real visitor
+conversation, interruption and verified two-track STOP remain separately
+required. Never copy this JSON into a production-publication certificate.
+
 ## Real CUDA compute acceptance (not a browser release certificate)
 
 On the GPU host after installing operator-approved weights/assets and pinning
