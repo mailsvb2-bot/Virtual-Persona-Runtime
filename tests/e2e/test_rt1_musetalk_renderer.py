@@ -213,6 +213,42 @@ class MuseTalkPcmWindowTest(unittest.TestCase):
             track.stop()
             self.assertTrue(track.wait_quiesced(2.0))
 
+    def test_missing_session_audio_binding_does_not_poison_shared_gpu(self):
+        gpu, audio, track = self._track()
+        gpu._healthy = True
+        # Deliberately undo the session binding. A malformed allocation must
+        # fail this track only, never disable other visitors' shared model.
+        track._audio_track = None
+        try:
+            track.push_pcm(bytes(12800))
+            for _ in range(100):
+                if track.render_failed():
+                    break
+                time.sleep(0.01)
+            self.assertTrue(track.render_failed())
+            self.assertTrue(gpu._healthy)
+        finally:
+            track.stop()
+            self.assertTrue(track.wait_quiesced(2.0))
+
+    def test_non_runtime_audio_sender_failure_is_session_local(self):
+        gpu, audio, track = self._track()
+        gpu._healthy = True
+        def reject_pcm(_pcm):
+            raise ValueError("session-local RTP encoder error")
+        audio.push_pcm = reject_pcm
+        try:
+            track.push_pcm(bytes(12800))
+            for _ in range(100):
+                if track.render_failed():
+                    break
+                time.sleep(0.01)
+            self.assertTrue(track.render_failed())
+            self.assertTrue(gpu._healthy)
+        finally:
+            track.stop()
+            self.assertTrue(track.wait_quiesced(2.0))
+
     def test_actual_inference_exception_poison_shared_model(self):
         gpu, audio, track = self._track()
         gpu._healthy = True
