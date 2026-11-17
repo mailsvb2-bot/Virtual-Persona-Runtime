@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -189,6 +190,43 @@ class MuseTalkPcmWindowTest(unittest.TestCase):
             self.assertEqual(audio.received, [
                 expected + bytes(model.PCM_WINDOW_BYTES - len(expected))
             ])
+        finally:
+            track.stop()
+            self.assertTrue(track.wait_quiesced(2.0))
+
+
+    def test_one_rtp_audio_failure_does_not_poison_shared_cuda_model(self):
+        gpu, audio, track = self._track()
+        gpu._healthy = True
+        def reject_pcm(_pcm):
+            raise RuntimeError("remote audio sender backpressure")
+        audio.push_pcm = reject_pcm
+        try:
+            track.push_pcm(bytes(12800))
+            for _ in range(100):
+                if track.render_failed():
+                    break
+                time.sleep(0.01)
+            self.assertTrue(track.render_failed())
+            self.assertTrue(gpu._healthy)
+        finally:
+            track.stop()
+            self.assertTrue(track.wait_quiesced(2.0))
+
+    def test_actual_inference_exception_poison_shared_model(self):
+        gpu, audio, track = self._track()
+        gpu._healthy = True
+        def broken_model(_samples, _frame):
+            raise RuntimeError("CUDA inference failed")
+        gpu._infer = broken_model
+        try:
+            track.push_pcm(bytes(12800))
+            for _ in range(100):
+                if track.render_failed():
+                    break
+                time.sleep(0.01)
+            self.assertTrue(track.render_failed())
+            self.assertFalse(gpu._healthy)
         finally:
             track.stop()
             self.assertTrue(track.wait_quiesced(2.0))
