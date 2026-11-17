@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from rt1_musetalk_renderer import prepared_avatar_digest
+from rt1_musetalk_renderer import approved_model_digest, prepared_avatar_digest
 import rt1_musetalk_offline_preflight as preflight
 
 REV = "a" * 40
@@ -53,7 +53,8 @@ class OfflinePreflightTest(unittest.TestCase):
             with patch("subprocess.check_output", side_effect=[REV, ""]):
                 result = preflight.inspect(
                     root, avatar, revision=REV,
-                    digest=prepared_avatar_digest(avatar)
+                    digest=prepared_avatar_digest(avatar),
+                    models_digest=approved_model_digest(root)
                 )
             self.assertTrue(result["upstream_apis_checked"])
             self.assertFalse(result["cuda_executed"])
@@ -66,7 +67,8 @@ class OfflinePreflightTest(unittest.TestCase):
             with patch("subprocess.check_output", return_value="b" * 40):
                 with self.assertRaisesRegex(ValueError, "revision differs"):
                     preflight.inspect(root, avatar, revision=REV,
-                                      digest=prepared_avatar_digest(avatar))
+                                      digest=prepared_avatar_digest(avatar),
+                                      models_digest=approved_model_digest(root))
 
     def test_untracked_source_injection_fails_before_model_load(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -94,7 +96,33 @@ class OfflinePreflightTest(unittest.TestCase):
             root, avatar = self.fixture(temp)
             with patch("subprocess.check_output", side_effect=[REV, ""]):
                 with self.assertRaisesRegex(ValueError, "approved digest"):
-                    preflight.inspect(root, avatar, revision=REV, digest="0" * 64)
+                    preflight.inspect(root, avatar, revision=REV, digest="0" * 64,
+                                      models_digest=approved_model_digest(root))
+
+    def test_modified_whisper_weight_fails_before_cuda(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, avatar = self.fixture(temp)
+            original_digest = approved_model_digest(root)
+            (root / "models/whisper/pytorch_model.bin").write_bytes(b"changed")
+            with patch("subprocess.check_output", side_effect=[REV, ""]):
+                with self.assertRaisesRegex(ValueError, "model weights differ"):
+                    preflight.inspect(root, avatar, revision=REV,
+                                      digest=prepared_avatar_digest(avatar),
+                                      models_digest=original_digest)
+
+    def test_symlinked_weights_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, _ = self.fixture(temp)
+            weight = root / "models/whisper/pytorch_model.bin"
+            outside = root / "outside.bin"
+            outside.write_bytes(b"unapproved")
+            weight.unlink()
+            try:
+                weight.symlink_to(outside)
+            except (OSError, NotImplementedError):
+                self.skipTest("filesystem lacks symlinks")
+            with self.assertRaisesRegex(RuntimeError, "symlinked MuseTalk model"):
+                approved_model_digest(root)
 
     def test_missing_vae_fails(self):
         with tempfile.TemporaryDirectory() as temp:
