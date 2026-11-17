@@ -65,7 +65,7 @@ class OfflinePreflightTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root, avatar = self.fixture(temp)
             with patch("subprocess.check_output", return_value="b" * 40):
-                with self.assertRaisesRegex(ValueError, "revision differs"):
+                with self.assertRaisesRegex(RuntimeError, "revision differs"):
                     preflight.inspect(root, avatar, revision=REV,
                                       digest=prepared_avatar_digest(avatar),
                                       models_digest=approved_model_digest(root))
@@ -76,7 +76,7 @@ class OfflinePreflightTest(unittest.TestCase):
             with patch("subprocess.check_output", side_effect=[
                 REV, "?? musetalk/utils/override.py"
             ]) as git_call:
-                with self.assertRaisesRegex(ValueError, "untracked MuseTalk source"):
+                with self.assertRaisesRegex(RuntimeError, "untracked MuseTalk source"):
                     preflight.inspect(root, avatar, revision=REV,
                                       digest=prepared_avatar_digest(avatar),
                                       models_digest=approved_model_digest(root))
