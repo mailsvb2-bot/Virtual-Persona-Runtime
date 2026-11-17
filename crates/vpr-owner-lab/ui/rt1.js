@@ -136,6 +136,27 @@
     status.dataset.error = String(problem);
   }
 
+  // Display actionable canonical reason codes, never provider/private details.
+  // Keep the exact safe code visible for support and existing browser tests.
+  function userError(code) {
+    const explanation = {
+      AUTH_REVOKED: "Доступ к разговору отозван. Подключитесь заново по действующему приглашению.",
+      AUTH_EXPIRED: "Срок доступа истёк. Запросите новое приглашение.",
+      AUTH_SCOPE_DENIED: "Для этого действия не хватает разрешений.",
+      CONSENT_REQUIRED: "Для разговора необходимо согласие.",
+      EGRESS_DENIED: "Отправка запроса этому провайдеру запрещена.",
+      PROVIDER_UNAVAILABLE: "Сервис ответа сейчас недоступен. Повторите попытку позже.",
+      PROVIDER_RATE_LIMITED: "Достигнут лимит запросов провайдера. Попробуйте позже.",
+      PROVIDER_TIMEOUT: "Провайдер не ответил вовремя. Проверьте состояние сеанса.",
+      BUDGET_EXHAUSTED: "Достигнут установленный бюджет разговора.",
+      TURN_CANCELLED: "Ответ был прерван.",
+      PREPARATION_FAILED: "Представление Persona пока не подготовлено.",
+      RT1_MICROPHONE_QUEUE_UNAVAILABLE: "Не удалось передать запись микрофона.",
+      RT1_REMOTE_MEDIA_STOP_UNCONFIRMED: "Остановка аудио и видео ещё не подтверждена."
+    };
+    return explanation[code] ? explanation[code] + " (" + code + ")" : code;
+  }
+
   async function api(path, data, signal) {
     if (!csrf) {
       const boot = await fetch("/api/bootstrap", { cache: "no-store" });
@@ -152,7 +173,7 @@
       signal
     });
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.code || "Ошибка сервера");
+    if (!response.ok) throw new Error(userError(payload.code || "Ошибка сервера"));
     return payload;
   }
 
