@@ -51,6 +51,15 @@ test("RT1 refuses a public visitor invite when only diagnostic video transport i
   await expect(page.locator("#status")).toContainText("Кабинет создан");
   const ownerToken = await page.locator("#owner-token").inputValue();
   expect(ownerToken.length).toBeGreaterThan(30);
+  await expect(page.locator("#owner-state")).toContainText("rt1-diagnostic-video-denial");
+  // Reload must never persist the owner secret, but reentering a legitimate
+  // owner token restores the correct canonical version and publication state.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator("#owner-token")).toHaveValue("");
+  await expect(page.locator("#publish")).toBeDisabled();
+  await page.locator("#owner-token").fill(ownerToken);
+  await page.locator("#owner-refresh").click();
+  await expect(page.locator("#publish")).toBeEnabled();
   await expect(page.locator("#persona-version")).toHaveValue("2");
   await expect(page.locator("#persona-version")).toHaveAttribute("readonly", "");
   await page.locator("#publish").click();
