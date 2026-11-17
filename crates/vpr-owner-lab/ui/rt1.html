@@ -10,8 +10,8 @@
 </head>
 <body>
 <main>
-<header><a href="/">← Owner Lab</a><h1>Persona · RT1</h1><p>Локальная проверка публикации и связи с посетителем. Диагностический WebRTC-тракт не является сгенерированным видео Persona.</p></header>
-<section>
+<header><a href="/">← Owner Lab</a><h1 id="rt1-heading">Persona · RT1</h1><p id="rt1-description">Локальная проверка публикации и связи с посетителем. Диагностический WebRTC-тракт не является сгенерированным видео Persona.</p></header>
+<section id="owner-panel">
 <h2>Владелец</h2>
 <p>Создайте доступ один раз после проверки Persona. Сохраните ключ владельца в надёжном месте — он не сохраняется в браузере.</p>
 <button id="provision" type="button" disabled>Создать кабинет владельца</button>
@@ -25,8 +25,11 @@
 <button id="unpublish" type="button" disabled>Снять с публикации</button>
 </div>
 <label>Код приглашения <input id="invite-token" readonly placeholder="Появится после публикации"></label>
+<label>Локальная ссылка для посетителя <input id="invite-link" readonly placeholder="Появится после публикации"></label>
+<button id="copy-invite" type="button" disabled>Скопировать ссылку для посетителя</button>
+<p>Ссылка работает только на том же локальном адресе Owner Lab. Это не публичная публикация и не доступ с другого устройства.</p>
 </section>
-<section>
+<section id="visitor-panel">
 <h2>Посетитель</h2>
 <p>Введите код приглашения и подключитесь. Микрофон включается только по вашему действию «Говорить». Камера посетителя не передаётся.</p>
 <label>Код приглашения <input id="visitor-token" autocomplete="off" placeholder="Введите код приглашения"></label>
