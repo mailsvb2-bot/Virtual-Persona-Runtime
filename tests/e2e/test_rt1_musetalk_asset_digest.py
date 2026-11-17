@@ -63,9 +63,14 @@ class PreparedAvatarDigestTest(unittest.TestCase):
             (root / "musetalk/utils/utils.py").touch()
             (root / "models/musetalkV15").mkdir(parents=True)
             (root / "models/whisper").mkdir(parents=True)
+            (root / "models/sd-vae").mkdir(parents=True)
             for name in ("models/musetalkV15/unet.pth",
                          "models/musetalkV15/musetalk.json",
-                         "models/whisper/config.json"):
+                         "models/whisper/config.json",
+                         "models/whisper/preprocessor_config.json",
+                         "models/whisper/pytorch_model.bin",
+                         "models/sd-vae/config.json",
+                         "models/sd-vae/diffusion_pytorch_model.bin"):
                 (root / name).touch()
             avatar.mkdir()
             prepare(avatar)
