@@ -109,6 +109,29 @@ does not eliminate malicious concurrent file replacement (TOCTOU).
   or invalid track denies new admission and/or fails the authorized media
   operation. No artificial successful receipt.
 
+## Mandatory zero-GPU preflight before server reservation
+
+Run this **on the prepared staging machine before requesting GPU time**.
+It never imports torch, runs CUDA, unpickles Persona data or approves
+production. It verifies the actual checked-out upstream MuseTalk commit,
+tracked source cleanliness, critical public function signatures, the local
+UNet / Whisper / VAE file presence and the independently approved Persona
+digest. Use the full upstream Git commit, not the floating `main` branch.
+
+```sh
+python /opt/Virtual-Persona-Runtime/scripts/rt1_musetalk_offline_preflight.py \\
+  --root /opt/MuseTalk \\
+  --avatar-dir /srv/vpr-persona/prepared \\
+  --expected-revision '<reviewed-upstream-40-hex-commit>' \\
+  --approved-avatar-sha256 "$RT1_MUSETALK_AVATAR_SHA256"
+```
+
+A pass is only an **offline compatibility check**. The CUDA runtime,
+model tensor compatibility, actual fps, memory usage, real browser A/V and
+STOP must still be tested separately. Reject a failure; never bypass it by
+allowing a diagnostic renderer to authorize a Persona. This preflight does
+not establish licensing, consent or safe artifact provenance by itself.
+
 ## Real CUDA compute acceptance (not a browser release certificate)
 
 On the GPU host after installing operator-approved weights/assets and pinning
