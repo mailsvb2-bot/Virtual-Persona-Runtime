@@ -37,7 +37,10 @@ MODEL_FILES = (
     "models/musetalkV15/unet.pth",
     "models/musetalkV15/musetalk.json",
     "models/whisper/config.json",
+    "models/whisper/preprocessor_config.json",
+    "models/whisper/pytorch_model.bin",
     "models/sd-vae/config.json",
+    "models/sd-vae/diffusion_pytorch_model.bin",
 )
 
 
