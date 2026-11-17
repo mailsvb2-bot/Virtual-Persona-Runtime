@@ -56,6 +56,22 @@ class ModelWeightsPinContract(unittest.TestCase):
                     MuseTalkRenderer(str(root), str(avatar),
                                      persona_id="persona-1", persona_version=1)
 
+    def test_worker_constructor_requires_source_pin_after_approved_assets(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, avatar = Path(temp) / "root", Path(temp) / "avatar"
+            stage(root, avatar)
+            approved_env = {
+                "RT1_MUSETALK_AVATAR_SHA256": prepared_avatar_digest(avatar),
+                "RT1_MUSETALK_MODELS_SHA256": approved_model_digest(root),
+            }
+            with patch("pathlib.Path.cwd", return_value=root), patch.dict(
+                os.environ, approved_env, clear=True
+            ):
+                # No torch or CUDA is touched when source pin is absent.
+                with self.assertRaisesRegex(RuntimeError, "SOURCE_REVISION pin required"):
+                    MuseTalkRenderer(str(root), str(avatar),
+                                     persona_id="persona-1", persona_version=1)
+
     def test_live_source_gate_rejects_unpinned_and_changed_checkout(self):
         with tempfile.TemporaryDirectory() as temp:
             root, avatar = Path(temp) / "root", Path(temp) / "avatar"
