@@ -70,7 +70,8 @@ test("separate owner and visitor contexts receive local aiortc RTP; revoke rejec
     await expect(owner.locator("#status")).toContainText("Кабинет создан");
     const ownerToken = await owner.locator("#owner-token").inputValue();
     expect(ownerToken.length).toBeGreaterThan(30);
-    await owner.locator("#persona-version").fill("2");
+    await expect(owner.locator("#persona-version")).toHaveValue("2");
+    await expect(owner.locator("#persona-version")).toHaveAttribute("readonly", "");
     await owner.locator("#publish").click();
     await expect(owner.locator("#status")).toContainText("Persona опубликована");
     const invite = await owner.locator("#invite-token").inputValue();
