@@ -18,7 +18,7 @@ import time
 
 from rt1_musetalk_renderer import (
     CHUNK_FRAMES, PCM_WINDOW_SAMPLES, VIDEO_FPS,
-    renderer_from_environment, prepared_avatar_digest,
+    renderer_from_environment, prepared_avatar_digest, approved_model_digest,
 )
 
 
@@ -99,6 +99,9 @@ def main(argv=None) -> int:
         "persona_version": renderer.persona_identity()[1],
         "prepared_assets_sha256": prepared_avatar_digest(
             os.environ["RT1_MUSETALK_AVATAR_DIR"]
+        ),
+        "approved_model_weights_sha256": approved_model_digest(
+            os.environ["RT1_MUSETALK_ROOT"]
         ),
         "startup_warmup_ms": round(model_load_ms, 3),
         "video_fps_target": VIDEO_FPS,
