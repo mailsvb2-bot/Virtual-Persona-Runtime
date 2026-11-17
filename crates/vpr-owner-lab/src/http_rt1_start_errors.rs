@@ -80,11 +80,20 @@ mod tests {
             assert_eq!(turn_error_response(reason, true).status_code().0, status);
         }
         // Unknown provider errors may contain secrets: never project them.
-        assert_eq!(turn_error_response("api-key=private", true).status_code().0, 409);
-        assert_eq!(turn_error_response("api-key=private", false).status_code().0, 409);
+        assert_eq!(
+            turn_error_response("api-key=private", true).status_code().0,
+            409
+        );
+        assert_eq!(
+            turn_error_response("api-key=private", false)
+                .status_code()
+                .0,
+            409
+        );
         assert_eq!(
             turn_error_response("RT1_MICROPHONE_QUEUE_UNAVAILABLE", false)
-                .status_code().0,
+                .status_code()
+                .0,
             409
         );
     }
