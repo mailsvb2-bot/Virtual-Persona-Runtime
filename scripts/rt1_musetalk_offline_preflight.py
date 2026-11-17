@@ -86,8 +86,8 @@ def inspect(root: Path, avatar: Path, *, revision: str, digest: str) -> dict:
         ).strip()
     if git("rev-parse", "HEAD") != revision:
         raise ValueError("MuseTalk source revision differs from approved commit")
-    if git("status", "--porcelain", "--untracked-files=no"):
-        raise ValueError("uncommitted changes to MuseTalk source")
+    if git("status", "--porcelain", "--untracked-files=all"):
+        raise ValueError("modified or untracked MuseTalk source files (review build tree)")
     check_apis(root)
     for path in MODEL_FILES:
         file = root / path
