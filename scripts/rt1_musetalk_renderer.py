@@ -418,12 +418,17 @@ class _MuseTalkVideoTrack:
                         # to the EXISTING aiortc senders together.
                         audio = self._audio_track
                         if audio is None:
-                            raise RuntimeError("MuseTalk audio sender not bound")
+                            # A missing binding is a bad session allocation,
+                            # not evidence of a failed shared CUDA model.
+                            raise _TrackTransportBackpressure(
+                                "MuseTalk session audio sender not bound"
+                            )
                         try:
                             audio.push_pcm(payload)
-                        except RuntimeError as error:
-                            # One stopped or slow RTP audio sender must not
-                            # permanently disable other authorized Personas.
+                        except Exception as error:
+                            # The sender is an independently owned transport.
+                            # Regardless of its local exception class, it must
+                            # not poison the shared GPU model for other visitors.
                             raise _TrackTransportBackpressure(
                                 "MuseTalk session audio sender rejected PCM"
                             ) from error
