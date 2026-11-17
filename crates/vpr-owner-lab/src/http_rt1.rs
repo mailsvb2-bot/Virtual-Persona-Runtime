@@ -25,7 +25,13 @@ pub(super) fn static_get_response(path: &str) -> Option<HttpResponse> {
         return None;
     }
     match path {
-        "/rt1" | "/rt1/visit" => Some(super::static_response(
+        "/rt1" => Some(super::static_response(
+            include_str!("../ui/rt1.html"),
+            "text/html; charset=utf-8",
+        )),
+        // Same local-only, explicit opt-in and CSRF-protected owner lab,
+        // rendered in visitor mode. No second HTTP or publication authority.
+        "/rt1/visit" => Some(super::static_response(
             include_str!("../ui/rt1.html"),
             "text/html; charset=utf-8",
         )),
