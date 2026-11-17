@@ -79,6 +79,8 @@
     el("unpublish").disabled = visitorOnly || ownerBusy || !authorized ||
       !["published", "paused"].includes(publication);
     el("persona-version").value = authorized ? String(ownerSnapshot.persona_version) : "";
+    el("copy-invite").disabled = visitorOnly || ownerBusy || !authorized ||
+      publication !== "published" || !el("invite-link").value;
     const publicationLabel = {
       private: "закрыта", published: "опубликована",
       paused: "приостановлена", unpublished: "снята с публикации"
@@ -106,6 +108,7 @@
       }
       ownerSnapshot = snapshot;
       ownerSnapshotToken = token;
+      if (snapshot.publication_status !== "published") clearOwnerInvite();
       renderOwnerControls();
     } catch (error) {
       if (epoch !== ownerStatusEpoch || el("owner-token").value.trim() !== token) return;
