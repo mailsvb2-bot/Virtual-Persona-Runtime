@@ -68,6 +68,18 @@ class OfflinePreflightTest(unittest.TestCase):
                     preflight.inspect(root, avatar, revision=REV,
                                       digest=prepared_avatar_digest(avatar))
 
+    def test_untracked_source_injection_fails_before_model_load(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, avatar = self.fixture(temp)
+            with patch("subprocess.check_output", side_effect=[
+                REV, "?? musetalk/utils/override.py"
+            ]) as git_call:
+                with self.assertRaisesRegex(ValueError, "untracked MuseTalk source"):
+                    preflight.inspect(root, avatar, revision=REV,
+                                      digest=prepared_avatar_digest(avatar))
+            self.assertIn("--untracked-files=all",
+                          git_call.call_args_list[1].args[0])
+
     def test_api_drift_fails_before_cuda(self):
         with tempfile.TemporaryDirectory() as temp:
             root, _ = self.fixture(temp)
