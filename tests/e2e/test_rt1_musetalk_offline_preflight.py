@@ -78,7 +78,8 @@ class OfflinePreflightTest(unittest.TestCase):
             ]) as git_call:
                 with self.assertRaisesRegex(ValueError, "untracked MuseTalk source"):
                     preflight.inspect(root, avatar, revision=REV,
-                                      digest=prepared_avatar_digest(avatar))
+                                      digest=prepared_avatar_digest(avatar),
+                                      models_digest=approved_model_digest(root))
             self.assertIn("--untracked-files=all",
                           git_call.call_args_list[1].args[0])
 
@@ -131,7 +132,8 @@ class OfflinePreflightTest(unittest.TestCase):
             with patch("subprocess.check_output", side_effect=[REV, ""]):
                 with self.assertRaisesRegex(ValueError, "MuseTalk model"):
                     preflight.inspect(root, avatar, revision=REV,
-                                      digest=prepared_avatar_digest(avatar))
+                                      digest=prepared_avatar_digest(avatar),
+                                      models_digest="0" * 64)
 
 
 if __name__ == "__main__":
