@@ -298,6 +298,10 @@ class MuseTalkRenderer:
             return output
 
 
+class _TrackTransportBackpressure(RuntimeError):
+    """Session-local RTP/queue failure, not a shared CUDA model failure."""
+
+
 class _MuseTalkVideoTrack:
     """Created as an aiortc.VideoStreamTrack subclass at runtime.
 
@@ -377,7 +381,7 @@ class _MuseTalkVideoTrack:
                             try:
                                 self._frames.put(frame, timeout=0.2)
                             except queue.Full:
-                                raise RuntimeError("MuseTalk frame backlog exceeded")
+                                raise _TrackTransportBackpressure("MuseTalk frame backlog exceeded")
                         if self._stop.is_set():
                             return
                         # Hold audio until its real inferred lip-sync frames
@@ -386,11 +390,28 @@ class _MuseTalkVideoTrack:
                         audio = self._audio_track
                         if audio is None:
                             raise RuntimeError("MuseTalk audio sender not bound")
-                        audio.push_pcm(payload)
+                        try:
+                            audio.push_pcm(payload)
+                        except RuntimeError as error:
+                            # One stopped or slow RTP audio sender must not
+                            # permanently disable other authorized Personas.
+                            raise _TrackTransportBackpressure(
+                                "MuseTalk session audio sender rejected PCM"
+                            ) from error
                 except Exception as error:
                     self._failed = error
-                    renderer._healthy = False
-                    LOG.exception("MuseTalk inference failed; renderer not ready")
+                    if isinstance(error, _TrackTransportBackpressure):
+                        LOG.warning(
+                            "MuseTalk session transport failed; canonical "
+                            "STOP reconciliation required", exc_info=True
+                        )
+                    else:
+                        renderer._healthy = False
+                        LOG.exception("MuseTalk model inference failed; renderer not ready")
+
+            def render_failed(self) -> bool:
+                """Expose asynchronous GPU/transport failures to the ONE ledger owner."""
+                return self._failed is not None
 
             async def next_timestamp(self):
                 """Pace *model-generated* frames at 25 fps, not aiortc's 30.
