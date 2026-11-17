@@ -27,6 +27,9 @@ Configure the existing RT1 worker:
 \`\`\`sh
 export RT1_VIDEO_RENDERER=musetalk-v15
 export RT1_MUSETALK_ROOT=/opt/MuseTalk
+# Must equal a reviewed, clean upstream MuseTalk checkout. Runtime and
+# offline preflight share the same verification before importing model code.
+export RT1_MUSETALK_SOURCE_REVISION=0a89dec45a0192b824e3cf4daf96c239440c5ed8
 export RT1_MUSETALK_AVATAR_DIR=/srv/vpr-persona/prepared
 # SHA-256 over precisely the prepared avatar inputs, computed on a trusted
 # staging host and independently reviewed/pinned BEFORE starting the worker.
@@ -44,6 +47,13 @@ export RT1_WORKER_DB=/var/lib/vpr/rt1-worker.sqlite3
 cd "$RT1_MUSETALK_ROOT"
 python /opt/Virtual-Persona-Runtime/scripts/rt1_media_worker_server.py
 \`\`\`
+
+The worker now **rechecks the approved 40-hex upstream source commit and
+its clean tracked/untracked source tree on each startup**, as well as the
+independently pinned model bytes and approved avatar. A preflight pass alone
+must not be used as permission to load a subsequently modified checkout.
+The pinned upstream revision is a reviewed installation candidate rather
+than proof of real CUDA compatibility.
 
 The process must start from MuseTalk's root to resolve the upstream VAE
 folder under \`models/sd-vae\`. It binds **loopback only**; use the existing
