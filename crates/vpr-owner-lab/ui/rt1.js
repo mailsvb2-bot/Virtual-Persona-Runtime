@@ -3,7 +3,45 @@
 (() => {
   const el = (id) => document.getElementById(id);
   const status = el("status");
-  const buttons = ["provision", "owner-refresh", "publish", "pause", "unpublish", "join", "leave", "speak", "interrupt", "send-text"];
+  const buttons = ["provision", "owner-refresh", "publish", "pause", "unpublish", "copy-invite", "join", "leave", "speak", "interrupt", "send-text"];
+  const visitorOnly = window.location.pathname === "/rt1/visit";
+
+  // Fragment credentials are never sent to the server by an HTTP GET.
+  // Consume and remove them before bootstrap, media or provider calls.
+  function importVisitorInvite() {
+    const fragment = window.location.hash;
+    if (!fragment) return;
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    if (!visitorOnly) return;
+    const params = new URLSearchParams(fragment.slice(1));
+    const token = params.get("invite");
+    if (token && /^[a-zA-Z0-9_-]{32,256}$/.test(token)) {
+      el("visitor-token").value = token;
+    }
+  }
+  if (visitorOnly) {
+    el("owner-panel").hidden = true;
+    el("rt1-heading").textContent = "Persona · Посетитель";
+    el("rt1-description").textContent =
+      "Локальная проверка разговора с Persona. Код приглашения ограничен правами и сроком публикации; согласие требуется отдельно.";
+    document.title = "Persona — посетитель RT1 (локально)";
+  }
+  importVisitorInvite();
+
+  function localInviteLink(token) {
+    if (!/^[a-zA-Z0-9_-]{32,256}$/.test(token)) {
+      throw new Error("Сервер вернул некорректный код приглашения.");
+    }
+    const address = new URL("/rt1/visit", window.location.origin);
+    address.hash = "invite=" + encodeURIComponent(token);
+    return address.href;
+  }
+
+  function clearOwnerInvite() {
+    el("invite-token").value = "";
+    el("invite-link").value = "";
+    el("copy-invite").disabled = true;
+  }
   let csrf = "";
   let peer = null;
   let liveKitRoom = null;
@@ -34,11 +72,11 @@
     const key = el("owner-token").value.trim();
     const authorized = key && ownerSnapshotToken === key && ownerSnapshot;
     const publication = authorized ? ownerSnapshot.publication_status : null;
-    el("owner-refresh").disabled = ownerBusy || !key;
-    el("provision").disabled = ownerBusy || Boolean(key);
-    el("publish").disabled = ownerBusy || !authorized || publication === "published";
-    el("pause").disabled = ownerBusy || !authorized || publication !== "published";
-    el("unpublish").disabled = ownerBusy || !authorized ||
+    el("owner-refresh").disabled = visitorOnly || ownerBusy || !key;
+    el("provision").disabled = visitorOnly || ownerBusy || Boolean(key);
+    el("publish").disabled = visitorOnly || ownerBusy || !authorized || publication === "published";
+    el("pause").disabled = visitorOnly || ownerBusy || !authorized || publication !== "published";
+    el("unpublish").disabled = visitorOnly || ownerBusy || !authorized ||
       !["published", "paused"].includes(publication);
     el("persona-version").value = authorized ? String(ownerSnapshot.persona_version) : "";
     const publicationLabel = {
@@ -81,7 +119,7 @@
   el("owner-token").addEventListener("input", () => {
     // Invalidate immediately, including responses already in flight.
     // A token issued to the previous owner must not remain in the current UI.
-    el("invite-token").value = "";
+    clearOwnerInvite();
     ownerStatusEpoch += 1;
     ownerSnapshot = null;
     ownerSnapshotToken = "";
@@ -140,6 +178,9 @@
       ownerBusy = false;
       buttons.forEach((id) => { el(id).disabled = false; });
       renderOwnerControls();
+      el("copy-invite").disabled = visitorOnly || !el("invite-link").value ||
+        !ownerSnapshot || ownerSnapshotToken !== el("owner-token").value.trim() ||
+        ownerSnapshot.publication_status !== "published";
       el("join").disabled = Boolean(sessionId);
       el("leave").disabled = !sessionId;
       // A concurrent owner action must not re-enable capture while a voice turn is pending.
@@ -175,10 +216,28 @@
       owner_token: token,
       expected_persona_version: expected
     });
+    const visitorLink = localInviteLink(result.visitor_token);
     el("invite-token").value = result.visitor_token;
+    el("invite-link").value = visitorLink;
+    el("copy-invite").disabled = false;
     await refreshOwnerStatus();
     message("Persona опубликована. Отправьте посетителю код приглашения.");
   }));
+
+  el("copy-invite").addEventListener("click", async () => {
+    const link = el("invite-link").value;
+    if (!link || visitorOnly || !ownerSnapshot ||
+        ownerSnapshotToken !== el("owner-token").value.trim() ||
+        ownerSnapshot.publication_status !== "published") return;
+    try {
+      await navigator.clipboard.writeText(link);
+      message("Локальная ссылка скопирована. На другом устройстве localhost недоступен.");
+    } catch (_) {
+      el("invite-link").focus();
+      el("invite-link").select();
+      message("Скопируйте выделенную локальную ссылку вручную.");
+    }
+  });
 
   function invalidatePendingText() {
     textRequestEpoch += 1;
@@ -188,7 +247,7 @@
   async function ownerRevoke(path) {
     invalidatePendingText();
     await api(path, { owner_token: ownerToken() });
-    el("invite-token").value = "";
+    clearOwnerInvite();
     await refreshOwnerStatus();
     message("Публикация отозвана. Удалённая остановка должна подтверждаться отдельно.");
   }
