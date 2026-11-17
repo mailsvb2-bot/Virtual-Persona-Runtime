@@ -51,7 +51,8 @@ test("RT1 refuses a public visitor invite when only diagnostic video transport i
   await expect(page.locator("#status")).toContainText("Кабинет создан");
   const ownerToken = await page.locator("#owner-token").inputValue();
   expect(ownerToken.length).toBeGreaterThan(30);
-  await page.locator("#persona-version").fill("2");
+  await expect(page.locator("#persona-version")).toHaveValue("2");
+  await expect(page.locator("#persona-version")).toHaveAttribute("readonly", "");
   await page.locator("#publish").click();
 
   await expect(page.locator("#status")).toContainText("RT1_VIDEO_RENDERER_UNAVAILABLE", {
