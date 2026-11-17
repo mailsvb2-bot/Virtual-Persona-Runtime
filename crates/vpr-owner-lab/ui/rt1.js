@@ -41,9 +41,13 @@
     el("unpublish").disabled = ownerBusy || !authorized ||
       !["published", "paused"].includes(publication);
     el("persona-version").value = authorized ? String(ownerSnapshot.persona_version) : "";
+    const publicationLabel = {
+      private: "закрыта", published: "опубликована",
+      paused: "приостановлена", unpublished: "снята с публикации"
+    };
     el("owner-state").textContent = authorized
       ? "Persona " + ownerSnapshot.persona_id + " · версия " + ownerSnapshot.persona_version +
-        " · публикация: " + (publication || "не создана")
+        " · публикация: " + (publicationLabel[publication] || "не создана")
       : "Введите и проверьте действующий ключ владельца. Версия Persona не задаётся вручную.";
   }
 
@@ -76,6 +80,8 @@
 
   el("owner-token").addEventListener("input", () => {
     // Invalidate immediately, including responses already in flight.
+    // A token issued to the previous owner must not remain in the current UI.
+    el("invite-token").value = "";
     ownerStatusEpoch += 1;
     ownerSnapshot = null;
     ownerSnapshotToken = "";
