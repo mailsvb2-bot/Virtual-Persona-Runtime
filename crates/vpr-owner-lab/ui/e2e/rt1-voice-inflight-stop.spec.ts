@@ -346,3 +346,93 @@ test("owner actions require canonical authenticated status and current server Pe
   await expect(page.locator("#pause")).toBeDisabled();
   await expect(page.locator("#unpublish")).toBeDisabled();
 });
+
+
+test("RT1 local owner invitation reaches separate visitor screen without leaking owner controls or auto-joining", async ({ page, context }) => {
+  const invitation = "A".repeat(64);
+  let publication = false;
+  let starts = 0;
+  await page.route("**/api/bootstrap", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ csrf_token: "test" }) }));
+  await page.route("**/api/rt1/owner/status", route =>
+    route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({
+        owner_id: "owner-local", persona_id: "persona-reviewed", persona_version: 8,
+        publication_status: publication ? "published" : null,
+      }),
+    }));
+  await page.route("**/api/rt1/owner/publish", route => {
+    const body = JSON.parse(route.request().postData() || "{}");
+    expect(body.expected_persona_version).toBe(8);
+    expect(body.owner_token).toBe("local-owner-key");
+    publication = true;
+    return route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ visitor_token: invitation }),
+    });
+  });
+  await page.goto("/rt1");
+  await page.locator("#owner-token").fill("local-owner-key");
+  await page.locator("#owner-refresh").click();
+  await expect(page.locator("#publish")).toBeEnabled();
+  await page.locator("#publish").click();
+  await expect(page.locator("#invite-link")).toHaveValue(
+    new RegExp("/rt1/visit#invite=" + invitation + "$"),
+  );
+  const link = await page.locator("#invite-link").inputValue();
+  expect(link).toContain("/rt1/visit#invite=");
+  expect(link).not.toContain("local-owner-key");
+
+  const visitor = await context.newPage();
+  await visitor.route("**/api/bootstrap", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ csrf_token: "test" }) }));
+  await visitor.route("**/api/rt1/visitor/start", route => {
+    starts += 1;
+    return route.fulfill({
+      status: 403, contentType: "application/json",
+      body: JSON.stringify({ code: "RT1_VISITOR_START_DENIED" }),
+    });
+  });
+  await visitor.goto(link);
+  await expect(visitor.locator("#status")).toHaveAttribute("data-rt1-ready", "true");
+  await expect(visitor.locator("#owner-panel")).toBeHidden();
+  await expect(visitor.locator("#visitor-panel")).toBeVisible();
+  await expect(visitor.locator("#visitor-token")).toHaveValue(invitation);
+  expect(new URL(visitor.url()).hash).toBe("");
+  await expect(visitor.locator("#consent")).not.toBeChecked();
+  expect(starts).toBe(0);
+  await visitor.locator("#join").click();
+  await expect(visitor.locator("#status")).toContainText("согласие");
+  expect(starts).toBe(0);
+  await visitor.locator("#consent").check();
+  await visitor.locator("#join").click();
+  await expect(visitor.locator("#status")).toContainText("RT1_VISITOR_START_DENIED");
+  expect(starts).toBe(1);
+  await expect(visitor.locator("#speak")).toBeDisabled();
+  await visitor.close();
+});
+
+test("RT1 invitation is immediately invalidated on owner credential change", async ({ page }) => {
+  await page.route("**/api/bootstrap", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ csrf_token: "test" }) }));
+  await page.route("**/api/rt1/owner/status", route =>
+    route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({
+        owner_id: "owner-1", persona_id: "persona", persona_version: 2,
+        publication_status: "published",
+      }),
+    }));
+  await page.goto("/rt1");
+  await page.locator("#owner-token").fill("owner-key");
+  await page.locator("#owner-refresh").click();
+  await expect(page.locator("#copy-invite")).toBeDisabled();
+  // An invitation must only originate from actual publish authority; simply
+  // supplying a valid owner token/status does not reconstruct a bearer token.
+  await expect(page.locator("#invite-link")).toHaveValue("");
+  await page.locator("#owner-token").fill("another-owner");
+  await expect(page.locator("#copy-invite")).toBeDisabled();
+  await expect(page.locator("#invite-token")).toHaveValue("");
+  await expect(page.locator("#invite-link")).toHaveValue("");
+});

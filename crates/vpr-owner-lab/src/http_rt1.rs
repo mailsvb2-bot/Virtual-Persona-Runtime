@@ -29,6 +29,9 @@ pub(super) fn static_get_response(path: &str) -> Option<HttpResponse> {
             include_str!("../ui/rt1.html"),
             "text/html; charset=utf-8",
         )),
+        // The visitor entry reuses the canonical local page response and
+        // preserves the original /rt1 route contract (no second renderer).
+        "/rt1/visit" => static_get_response("/rt1"),
         "/rt1.js" => Some(super::static_response(
             include_str!("../ui/rt1.js"),
             super::JS_MIME,
