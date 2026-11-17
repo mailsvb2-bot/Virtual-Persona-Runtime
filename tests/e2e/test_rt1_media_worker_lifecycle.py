@@ -131,6 +131,39 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.worker.create("op-a", 1)
 
+    def test_completed_stop_receipts_retire_only_after_sqlite_commit(self):
+        # The worker owns SQLite evidence; the backend cache is only an
+        # in-process retry bridge for STOP calls whose HTTP result was lost.
+        confirmed = []
+        def acknowledged(operation_id, session_id, generation):
+            row = self.worker._db.execute(
+                "SELECT phase, stop_verified FROM media_operations WHERE id=?",
+                (operation_id,),
+            ).fetchone()
+            self.assertEqual(row, ("stopped", 1))
+            confirmed.append((operation_id, session_id, generation))
+            return True
+        self.sender.acknowledge_durable_stop = acknowledged
+        self.worker.create("retire-on-commit", 1)
+        self.worker.cancel("retire-on-commit", 1)
+        self.assertEqual(confirmed, [("retire-on-commit", "session-a", 1)])
+        # Idempotent replay obtains proof from the durable ledger, never
+        # invents another sender STOP.
+        self.worker.cancel("retire-on-commit", 1)
+        self.assertEqual(self.sender.stopped, 1)
+
+    def test_unconfirmed_stop_does_not_release_backend_retry_receipt(self):
+        acknowledged = []
+        self.sender.acknowledge_durable_stop = lambda *args: acknowledged.append(args)
+        self.worker.create("stop-unconfirmed", 1)
+        self.sender.partial = True
+        with self.assertRaisesRegex(RuntimeError, "STOP"):
+            self.worker.cancel("stop-unconfirmed", 1)
+        self.assertEqual(acknowledged, [])
+        self.sender.partial = False
+        self.worker.cancel("stop-unconfirmed", 1)
+        self.assertEqual(acknowledged, [("stop-unconfirmed", "session-a", 1)])
+
     def test_dual_sender_stop_receipt_is_durable_across_restart(self):
         self.worker.create("verified-stop", 1)
         receipt = self.worker.cancel("verified-stop", 1)
