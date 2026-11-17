@@ -511,6 +511,24 @@ class AiortcSenderBackend:
                     self._sessions.pop(session_id)
             return receipt
 
+    def acknowledge_durable_stop(
+        self, operation_id: str, session_id: str, generation: int
+    ) -> bool:
+        """Release the transient STOP receipt ONLY after SQLite commits it.
+
+        Unknown/mismatched acknowledgements must never evict a receipt for
+        another session. The canonical lifecycle remains the sole authority
+        for the durable audio+video STOP verdict.
+        """
+        with self._lock:
+            receipt = self._completed_stops.get(session_id)
+            if receipt is None or (
+                receipt.operation_id, receipt.generation
+            ) != (operation_id, generation):
+                return False
+            self._completed_stops.pop(session_id, None)
+            return True
+
     def shutdown(self):
         with self._lock:
             pending = list(self._sessions.values())
