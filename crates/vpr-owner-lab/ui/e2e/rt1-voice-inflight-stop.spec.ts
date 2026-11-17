@@ -436,3 +436,46 @@ test("RT1 invitation is immediately invalidated on owner credential change", asy
   await expect(page.locator("#invite-token")).toHaveValue("");
   await expect(page.locator("#invite-link")).toHaveValue("");
 });
+
+
+test("RT1 text failures display only reviewed actionable reason codes", async ({ page }) => {
+  await page.addInitScript(() => {
+    const win = window as typeof window & { LivekitClient?: unknown };
+    class FakeRoom {
+      on(): FakeRoom { return this; }
+      async connect(): Promise<void> {}
+      async disconnect(): Promise<void> {}
+    }
+    win.LivekitClient = { Room: FakeRoom, RoomEvent: {} };
+  });
+  await page.route("**/api/bootstrap", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ csrf_token: "test" }) }));
+  await page.route("**/api/rt1/visitor/start", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      session_id: "typed-error-test", voice_enabled: true,
+      signal: { transport: { kind: "live_kit", server_url: "wss://example.test", token: "scoped" } },
+    }) }));
+  await page.route("**/api/rt1/visitor/status", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ active: true }) }));
+  await page.route("**/api/rt1/visitor/close", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ remote_stop_confirmed: true }) }));
+  let code = "PROVIDER_RATE_LIMITED";
+  await page.route("**/api/rt1/visitor/text", route =>
+    route.fulfill({ status: code === "PROVIDER_RATE_LIMITED" ? 429 : 409,
+      contentType: "application/json", body: JSON.stringify({ code }) }));
+  await page.goto("/rt1");
+  await page.locator("#visitor-token").fill("invite");
+  await page.locator("#consent").check();
+  await page.locator("#join").click();
+  await expect(page.locator("#send-text")).toBeEnabled();
+  await page.locator("#visitor-text").fill("Первый вопрос");
+  await page.locator("#send-text").click();
+  await expect(page.locator("#status")).toContainText("Достигнут лимит запросов провайдера");
+  await expect(page.locator("#status")).toContainText("PROVIDER_RATE_LIMITED");
+
+  code = "RT1_VISITOR_TEXT_DENIED";
+  await page.locator("#visitor-text").fill("Второй вопрос");
+  await page.locator("#send-text").click();
+  await expect(page.locator("#status")).toContainText("RT1_VISITOR_TEXT_DENIED");
+  await expect(page.locator("#status")).not.toContainText("лимит запросов");
+});
