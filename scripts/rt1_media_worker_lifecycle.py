@@ -614,6 +614,13 @@ class MediaLifecycle:
                         (operation_id,),
                     ).fetchone()[0]
                     if verified == 1:
+                        # Durable STOP is already recorded. A prior process
+                        # may have committed just before in-memory cleanup.
+                        acknowledge = getattr(
+                            self._backend, "acknowledge_durable_stop", None
+                        )
+                        if callable(acknowledge):
+                            acknowledge(operation_id, session_id, generation)
                         return StopReceipt(operation_id, session_id, generation, True, True)
                     # A pre-migration stopped row is not a STOP receipt.
                     self._write(operation_id, generation, "uncertain", session_id)
@@ -693,6 +700,14 @@ class MediaLifecycle:
                     if self._db.in_transaction:
                         self._db.execute("ROLLBACK")
                     raise
+            # Only now can the sender evict its in-process idempotent
+            # receipt(s): the canonical SQLite ledger is durably authoritative.
+            # Keep both targets distinct for mismatched preassigned CREATE.
+            acknowledge = getattr(self._backend, "acknowledge_durable_stop", None)
+            if callable(acknowledge):
+                acknowledge(operation_id, session_id, generation)
+                if mismatch:
+                    acknowledge(operation_id, preassigned, generation)
             return receipt
 
     def request_shutdown(self) -> None:
