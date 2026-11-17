@@ -13,7 +13,9 @@ import re
 import subprocess
 import sys
 
-from rt1_musetalk_renderer import prepared_avatar_digest
+from rt1_musetalk_renderer import (
+    REQUIRED_MODEL_FILES, approved_model_digest, prepared_avatar_digest,
+)
 
 APIS = {
     "musetalk/utils/utils.py": {
@@ -33,15 +35,7 @@ APIS = {
         ),
     },
 }
-MODEL_FILES = (
-    "models/musetalkV15/unet.pth",
-    "models/musetalkV15/musetalk.json",
-    "models/whisper/config.json",
-    "models/whisper/preprocessor_config.json",
-    "models/whisper/pytorch_model.bin",
-    "models/sd-vae/config.json",
-    "models/sd-vae/diffusion_pytorch_model.bin",
-)
+MODEL_FILES = REQUIRED_MODEL_FILES
 
 
 def check_apis(root: Path) -> None:
@@ -71,11 +65,14 @@ def check_apis(root: Path) -> None:
                 raise ValueError(f"incompatible upstream API {path}:{dotted}")
 
 
-def inspect(root: Path, avatar: Path, *, revision: str, digest: str) -> dict:
+def inspect(root: Path, avatar: Path, *, revision: str, digest: str,
+            models_digest: str) -> dict:
     if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
         raise ValueError("approved MuseTalk revision must be full SHA-1")
     if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
         raise ValueError("approved Persona digest must be SHA-256")
+    if re.fullmatch(r"[0-9a-f]{64}", models_digest) is None:
+        raise ValueError("approved model weights digest must be SHA-256")
     root, avatar = root.resolve(strict=True), avatar.resolve(strict=True)
     if not root.is_dir() or not avatar.is_dir():
         raise ValueError("MuseTalk root and prepared avatar must be directories")
@@ -97,6 +94,9 @@ def inspect(root: Path, avatar: Path, *, revision: str, digest: str) -> dict:
         file = avatar / path
         if file.is_symlink() or not file.is_file() or file.stat().st_size == 0:
             raise ValueError(f"missing or invalid prepared avatar: {path}")
+    actual_models = approved_model_digest(root)
+    if actual_models != models_digest:
+        raise ValueError("MuseTalk model weights differ from independently approved digest")
     actual_digest = prepared_avatar_digest(avatar)
     if actual_digest != digest:
         raise ValueError("prepared avatar does not match independently approved digest")
@@ -107,6 +107,7 @@ def inspect(root: Path, avatar: Path, *, revision: str, digest: str) -> dict:
         "schema": "vpr.rt1.offline-gpu-preflight.v1",
         "upstream_revision": revision,
         "prepared_avatar_sha256": actual_digest,
+        "model_weights_sha256": actual_models,
         "prepared_frames": count,
         "upstream_apis_checked": True,
         "cuda_executed": False,
@@ -122,11 +123,13 @@ def main(argv=None):
     parser.add_argument("--avatar-dir", type=Path, required=True)
     parser.add_argument("--expected-revision", required=True)
     parser.add_argument("--approved-avatar-sha256", required=True)
+    parser.add_argument("--approved-models-sha256", required=True)
     a = parser.parse_args(argv)
     try:
         report = inspect(a.root, a.avatar_dir,
                          revision=a.expected_revision,
-                         digest=a.approved_avatar_sha256)
+                         digest=a.approved_avatar_sha256,
+                         models_digest=a.approved_models_sha256)
     except (ValueError, OSError, SyntaxError, subprocess.SubprocessError) as exc:
         print(f"RT1 offline preflight FAILED: {exc}", file=sys.stderr)
         return 2
