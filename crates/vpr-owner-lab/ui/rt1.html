@@ -16,7 +16,9 @@
 <p>Создайте доступ один раз после проверки Persona. Сохраните ключ владельца в надёжном месте — он не сохраняется в браузере.</p>
 <button id="provision" type="button" disabled>Создать кабинет владельца</button>
 <label>Ключ владельца <input id="owner-token" type="password" autocomplete="off" placeholder="Ключ владельца"></label>
-<label>Версия проверенной Persona <input id="persona-version" type="number" min="1" step="1" value="1"></label>
+<button id="owner-refresh" type="button" disabled>Проверить доступ и состояние</button>
+<p id="owner-state" role="status" aria-live="polite">Введите ключ владельца для загрузки текущей версии и статуса.</p>
+<label>Текущая версия проверенной Persona <input id="persona-version" type="number" min="1" step="1" readonly placeholder="Загрузится с сервера"></label>
 <div class="actions">
 <button id="publish" type="button" disabled>Опубликовать и получить приглашение</button>
 <button id="pause" type="button" disabled>Приостановить</button>

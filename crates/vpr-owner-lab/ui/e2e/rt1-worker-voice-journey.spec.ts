@@ -118,7 +118,8 @@ async function createOwnerAndInvite(page: Page): Promise<{ owner: string; invite
   await expect(page.locator("#status")).toContainText("Кабинет создан");
   const owner = await page.locator("#owner-token").inputValue();
   expect(owner.length).toBeGreaterThan(30);
-  await page.locator("#persona-version").fill("2");
+  await expect(page.locator("#persona-version")).toHaveValue("2");
+  await expect(page.locator("#persona-version")).toHaveAttribute("readonly", "");
   await page.locator("#publish").click();
   await expect(page.locator("#invite-token")).not.toHaveValue("");
   const invite = await page.locator("#invite-token").inputValue();
@@ -268,6 +269,8 @@ test.describe.serial("RT1 verified worker visitor voice journey (synthetic local
     await page.goto("/rt1", { waitUntil: "domcontentloaded" });
     await expect(page.locator("#status")).toHaveAttribute("data-rt1-ready", "true");
     await page.locator("#owner-token").fill(ownerToken);
+    await page.locator("#owner-refresh").click();
+    await expect(page.locator("#pause")).toBeEnabled();
     const operationId = await joinVisitor(page, visitorToken);
 
     const providersBefore = await providerRecords(request);
