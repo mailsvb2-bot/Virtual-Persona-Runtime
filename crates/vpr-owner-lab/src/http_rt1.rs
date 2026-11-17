@@ -471,7 +471,7 @@ fn visitor_text(
     let conversation = lookup(state, &body.session_id)?;
     let result = conversation
         .text_turn(&body.text)
-        .map_err(|_| error_response(409, "RT1_VISITOR_TEXT_DENIED"))?;
+        .map_err(|reason| startup_errors::turn_error_response(&reason, false))?;
     // A revoked session may not receive a buffered LLM result even when
     // the provider returns after authority was withdrawn.
     if !conversation.is_active() {
@@ -499,7 +499,7 @@ fn visitor_voice(
     // PCM sender, not through browser-controlled speech commands.
     let result = conversation
         .voice_turn_streaming(body.pcm)
-        .map_err(|_| error_response(409, "RT1_VISITOR_VOICE_DENIED"))?;
+        .map_err(|reason| startup_errors::turn_error_response(&reason, true))?;
     if !conversation.is_active() {
         return Err(error_response(409, "RT1_VISITOR_VOICE_DENIED"));
     }
