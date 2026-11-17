@@ -92,10 +92,18 @@ class SyntheticPersonaSenderBackend(AiortcSenderBackend):
         with self._fixture_guard:
             self._pcm_pushes += 1
 
-    def fixture_state(self) -> dict:
+    def fixture_state(self, lifecycle: MediaLifecycle) -> dict:
         with self._lock:
             sessions = tuple(self._sessions.values())
-            receipts = tuple(self._completed_stops.values())
+        # A completed remote STOP is durable evidence, not an immortal
+        # private aiortc cache entry. Read the ONE canonical worker ledger,
+        # so browser E2E still proves it after the backend releases the cache.
+        with lifecycle._lock:
+            receipts = tuple(lifecycle._db.execute(
+                """SELECT id,session_id,generation FROM media_operations
+                   WHERE phase='stopped' AND stop_verified=1
+                     AND session_id IS NOT NULL ORDER BY id"""
+            ).fetchall())
         with self._fixture_guard:
             pcm_pushes = self._pcm_pushes
         with SyntheticPersonaVideoTrack.total_frames_lock:
@@ -109,12 +117,12 @@ class SyntheticPersonaSenderBackend(AiortcSenderBackend):
             "video_senders_live": sum(entry.video.readyState == "live" for entry in sessions),
             "confirmed_stops": [
                 {
-                    "operation_id": receipt.operation_id,
-                    "session_id": receipt.session_id,
-                    "audio_stopped": receipt.audio_stopped,
-                    "video_stopped": receipt.video_stopped,
+                    "operation_id": operation_id,
+                    "session_id": session_id,
+                    "audio_stopped": True,
+                    "video_stopped": True,
                 }
-                for receipt in receipts
+                for operation_id, session_id, _generation in receipts
             ],
         }
 
@@ -137,7 +145,7 @@ def main() -> None:
                 if not self._authorized():
                     self._send(401, {"error": "unauthorized"})
                 else:
-                    self._send(200, backend.fixture_state())
+                    self._send(200, backend.fixture_state(lifecycle))
                 return
             super().do_GET()
 
