@@ -246,6 +246,13 @@ test("RT1 text validation and late-response fence survive owner revoke", async (
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ active: true }) }));
   await page.route("**/api/rt1/visitor/close", route =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ remote_stop_confirmed: true }) }));
+  // Owner controls are driven by the authenticated canonical status route,
+  // never enabled merely because a key was typed into the browser.
+  await page.route("**/api/rt1/owner/status", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      owner_id: "test-owner", persona_id: "test-persona", persona_version: 2,
+      publication_status: "published",
+    }) }));
   await page.route("**/api/rt1/owner/pause", route =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) }));
   let releaseReply: (() => void) | null = null;
@@ -288,6 +295,8 @@ test("RT1 text validation and late-response fence survive owner revoke", async (
   await expect.poll(() => textRequests).toBe(1);
   await expect(page.locator("#send-text")).toBeDisabled();
   await page.locator("#owner-token").fill("owner-key");
+  await page.locator("#owner-refresh").click();
+  await expect(page.locator("#pause")).toBeEnabled();
   await page.locator("#pause").click();
   await expect(page.locator("#status")).toContainText("Публикация отозвана");
   (releaseReply as (() => void) | null)?.();
