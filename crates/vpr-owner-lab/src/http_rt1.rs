@@ -196,6 +196,7 @@ pub(super) fn route_post(
         return Some(guarded_reply(visitor_ice(request, state)));
     }
     let result = match path {
+        "/api/rt1/owner/status" => owner_status(request),
         "/api/rt1/owner/provision" => owner_provision(request),
         "/api/rt1/owner/publish" => owner_publish(request, state),
         "/api/rt1/owner/pause" => owner_revoke(request, false),
@@ -225,6 +226,17 @@ fn owner_provision(request: &mut tiny_http::Request) -> Rt1HttpResult {
             "owner_token": owner_token,
         }),
     ))
+}
+
+/// Owner-scoped read-only snapshot from the ONE canonical durable workspace.
+/// Authentication uses the owner secret; no browser-supplied PersonaVersion,
+/// readiness or publication state is trusted and no visitor bearer is returned.
+fn owner_status(request: &mut tiny_http::Request) -> Rt1HttpResult {
+    let body: OwnerToken = parse_json(request)?;
+    let status = Rt1OwnerController::new()
+        .status(&body.owner_token)
+        .map_err(|_| error_response(403, "RT1_OWNER_STATUS_DENIED"))?;
+    Ok(json_response(200, &status))
 }
 
 fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
