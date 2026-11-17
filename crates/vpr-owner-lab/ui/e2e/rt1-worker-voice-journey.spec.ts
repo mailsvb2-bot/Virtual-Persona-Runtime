@@ -126,9 +126,17 @@ async function createOwnerAndInvite(page: Page): Promise<{ owner: string; invite
   return { owner, invite };
 }
 
-async function joinVisitor(page: Page, invite: string): Promise<string> {
+async function joinVisitor(page: Page, invite: string, visitorOnly = false): Promise<string> {
+  if (visitorOnly) {
+    // Exercise the real verified worker from the separate visitor invitation
+    // screen, not merely the owner+visitor all-in-one diagnostic page.
+    await page.goto("/rt1/visit#invite=" + encodeURIComponent(invite), { waitUntil: "domcontentloaded" });
+    await expect(page.locator("#owner-panel")).toBeHidden();
+    await expect(page.locator("#visitor-token")).toHaveValue(invite);
+    expect(new URL(page.url()).hash).toBe("");
+  }
   await expect(page.locator("#status")).toHaveAttribute("data-rt1-ready", "true");
-  await page.locator("#visitor-token").fill(invite);
+  if (!visitorOnly) await page.locator("#visitor-token").fill(invite);
   await page.locator("#consent").check();
   const startPromise = page.waitForResponse((response) =>
     response.url().endsWith("/api/rt1/visitor/start") && response.request().method() === "POST",
@@ -190,7 +198,7 @@ test.describe.serial("RT1 verified worker visitor voice journey (synthetic local
     ownerToken = credentials.owner;
     visitorToken = credentials.invite;
 
-    const operationId = await joinVisitor(page, visitorToken);
+    const operationId = await joinVisitor(page, visitorToken, true);
     await page.locator("#visitor-text").fill("Текстовый вопрос visitor");
     const textPromise = page.waitForResponse((response) =>
       response.url().endsWith("/api/rt1/visitor/text") && response.request().method() === "POST",
