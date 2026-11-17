@@ -32,6 +32,9 @@ export RT1_MUSETALK_AVATAR_DIR=/srv/vpr-persona/prepared
 # staging host and independently reviewed/pinned BEFORE starting the worker.
 # Do not generate this value from the live avatar directory at startup.
 export RT1_MUSETALK_AVATAR_SHA256='<64-lowercase-hex-approved-digest>'
+# Independently approved digest of all runtime UNet/Whisper/VAE weights
+# and their configurations; must be pinned BEFORE loading torch models.
+export RT1_MUSETALK_MODELS_SHA256='<64-lowercase-hex-approved-weights-digest>'
 # MUST equal the canonical reviewed Persona identity/version in Owner Lab.
 export RT1_MUSETALK_PERSONA_ID=persona-a
 export RT1_MUSETALK_PERSONA_VERSION=3
@@ -128,6 +131,34 @@ and authorized review outside the asset directory. Lock down filesystem
 write access while the worker is running: hashing before deserialization
 does not eliminate malicious concurrent file replacement (TOCTOU).
 
+## Approved model-weight integrity gate
+
+The offline GPU preflight and the real renderer now share the same canonical
+runtime model-file list: MuseTalk v1.5 UNet checkpoint/configuration, Whisper
+checkpoint/configuration/preprocessor, and SD-VAE checkpoint/configuration.
+
+**The complete model/config byte set must be approved independently**, not
+only checked for existence. On a trusted isolated staging machine after
+obtaining reviewed upstream weights, compute:
+
+```sh
+python - <<'PY'
+import sys
+sys.path.insert(0, '/opt/Virtual-Persona-Runtime/scripts')
+from rt1_musetalk_renderer import approved_model_digest
+print(approved_model_digest('/opt/MuseTalk'))
+PY
+```
+
+Store that reviewed digest **outside the model directory** and configure
+`RT1_MUSETALK_MODELS_SHA256`. Worker startup fails **before any torch
+import/model deserialization** when the pin is absent, malformed or differs
+from the installed bytes. A replacement or symlink in any expected model
+file is rejected. A digest is an integrity pin against a separately approved
+baseline; it does NOT automatically prove weight provenance, licensing or
+runtime safety. Never recompute or approve a new digest automatically in
+production. Prevent file replacement during/after verification.
+
 ## Media behavior
 
 - One loaded real CUDA Whisper / MuseTalk VAE / UNet / positional-encoding
@@ -173,7 +204,8 @@ python /opt/Virtual-Persona-Runtime/scripts/rt1_musetalk_offline_preflight.py \\
   --root /opt/MuseTalk \\
   --avatar-dir /srv/vpr-persona/prepared \\
   --expected-revision '<reviewed-upstream-40-hex-commit>' \\
-  --approved-avatar-sha256 "$RT1_MUSETALK_AVATAR_SHA256"
+  --approved-avatar-sha256 "$RT1_MUSETALK_AVATAR_SHA256" \
+  --approved-models-sha256 "$RT1_MUSETALK_MODELS_SHA256"
 ```
 
 A pass is only an **offline compatibility check**. The CUDA runtime,
