@@ -105,7 +105,14 @@ class ActualRtpRevocation(unittest.IsolatedAsyncioTestCase):
                 # Backend returns STOP only after both real tracks and
                 # the sending RTCPeerConnection are closed.
                 self.assertNotIn(session_id, backend._sessions)
-                self.assertIn(session_id, backend._completed_stops)
+                # After the canonical SQLite commit, in-memory STOP cache
+                # must be retired. Retry proof comes from durable evidence.
+                self.assertNotIn(session_id, backend._completed_stops)
+                replay = await asyncio.to_thread(
+                    lifecycle.cancel, operation, generation
+                )
+                self.assertEqual(replay, receipt)
+                self.assertNotIn(session_id, backend._completed_stops)
                 with self.assertRaises(RuntimeError):
                     await asyncio.to_thread(
                         backend.push_pcm, operation, session_id, generation, one_frame
