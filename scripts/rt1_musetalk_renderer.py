@@ -14,6 +14,8 @@ import logging
 import os
 from pathlib import Path
 import queue
+import re
+import subprocess
 import sys
 import threading
 import time
@@ -104,6 +106,30 @@ def prepared_avatar_digest(avatar_dir: str | Path) -> str:
     return digest.hexdigest()
 
 
+def verify_upstream_source(root: str | Path, revision: str) -> None:
+    """Enforce the reviewed MuseTalk checkout before loading any Python model.
+
+    The offline preflight and the runtime use the same source-identity gate.
+    A tracked source edit or injected untracked file must never get to import.
+    Model weights are separately pinned; upstream models/ are gitignored.
+    """
+    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise RuntimeError("RT1_MUSETALK_SOURCE_REVISION pin required")
+    folder = Path(root).resolve(strict=True)
+    def git(*args):
+        try:
+            return subprocess.check_output(
+                ["git", "-C", str(folder), *args],
+                text=True, stderr=subprocess.DEVNULL, timeout=10
+            ).strip()
+        except (OSError, subprocess.SubprocessError) as error:
+            raise RuntimeError("MuseTalk source identity cannot be verified") from error
+    if git("rev-parse", "HEAD") != revision:
+        raise RuntimeError("MuseTalk source revision differs from approved commit")
+    if git("status", "--porcelain", "--untracked-files=all"):
+        raise RuntimeError("modified or untracked MuseTalk source files")
+
+
 class MuseTalkRenderer:
     """One loaded model and one GPU inference lock for all owned RTP sessions."""
 
@@ -160,6 +186,9 @@ class MuseTalkRenderer:
             raise RuntimeError("RT1_MUSETALK_MODELS_SHA256 pin required")
         if not hmac.compare_digest(approved_model_digest(root_path), model_pin):
             raise RuntimeError("approved MuseTalk model weights digest mismatch")
+        verify_upstream_source(
+            root_path, os.environ.get("RT1_MUSETALK_SOURCE_REVISION", "")
+        )
         # Load only after local path, weights and CUDA checks. No implicit downloads.
         import torch
         if not torch.cuda.is_available() or gpu_id >= torch.cuda.device_count() or gpu_id < 0:
