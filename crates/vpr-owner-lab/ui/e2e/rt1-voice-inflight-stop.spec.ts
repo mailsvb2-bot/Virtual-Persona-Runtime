@@ -304,3 +304,45 @@ test("RT1 text validation and late-response fence survive owner revoke", async (
   await expect(page.locator("#speech-result")).not.toContainText("stale reply");
   expect(pageErrors).toEqual([]);
 });
+
+
+test("owner actions require canonical authenticated status and current server PersonaVersion", async ({ page }) => {
+  await page.route("**/api/bootstrap", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ csrf_token: "test" }) }));
+  await page.route("**/api/rt1/owner/status", route => {
+    const token = JSON.parse(route.request().postData() ?? "{}").owner_token;
+    if (token !== "valid-owner") {
+      return route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ code: "RT1_OWNER_STATUS_DENIED" }) });
+    }
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      owner_id: "owner-1", persona_id: "owner-persona", persona_version: 7,
+      publication_status: "published",
+    }) });
+  });
+  await page.goto("/rt1");
+  await expect(page.locator("#status")).toHaveAttribute("data-rt1-ready", "true");
+  await expect(page.locator("#publish")).toBeDisabled();
+  await expect(page.locator("#pause")).toBeDisabled();
+  await expect(page.locator("#unpublish")).toBeDisabled();
+  await expect(page.locator("#persona-version")).toHaveAttribute("readonly", "");
+
+  await page.locator("#owner-token").fill("invalid-owner");
+  await page.locator("#owner-refresh").click();
+  await expect(page.locator("#status")).toContainText("RT1_OWNER_STATUS_DENIED");
+  await expect(page.locator("#publish")).toBeDisabled();
+  await expect(page.locator("#pause")).toBeDisabled();
+
+  await page.locator("#owner-token").fill("valid-owner");
+  await page.locator("#owner-refresh").click();
+  await expect(page.locator("#persona-version")).toHaveValue("7");
+  await expect(page.locator("#owner-state")).toContainText("опубликован");
+  await expect(page.locator("#pause")).toBeEnabled();
+  await expect(page.locator("#unpublish")).toBeEnabled();
+  await expect(page.locator("#publish")).toBeDisabled();
+
+  // Editing the credential immediately discards the prior owner projection.
+  await page.locator("#owner-token").fill("different-owner");
+  await expect(page.locator("#persona-version")).toHaveValue("");
+  await expect(page.locator("#pause")).toBeDisabled();
+  await expect(page.locator("#unpublish")).toBeDisabled();
+});
