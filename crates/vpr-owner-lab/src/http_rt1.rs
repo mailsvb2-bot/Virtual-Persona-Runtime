@@ -25,7 +25,7 @@ pub(super) fn static_get_response(path: &str) -> Option<HttpResponse> {
         return None;
     }
     match path {
-        "/rt1" => Some(super::static_response(
+        "/rt1" | "/rt1/visit" => Some(super::static_response(
             include_str!("../ui/rt1.html"),
             "text/html; charset=utf-8",
         )),
