@@ -46,6 +46,56 @@ The process must start from MuseTalk's root to resolve the upstream VAE
 folder under \`models/sd-vae\`. It binds **loopback only**; use the existing
 authenticated TLS proxy and canonical worker operations for external traffic.
 
+## Pinned upstream GPU environment (pre-production recipe)
+
+The upstream MuseTalk Git `main` examined for this integration resolves to
+`0a89dec45a0192b824e3cf4daf96c239440c5ed8`. The documented upstream
+install uses **Python 3.10**, **torch 2.0.1**, **torchvision 0.15.2**,
+**torchaudio 2.0.2** from the CUDA 11.8 wheel index, plus exact versions in
+the upstream `requirements.txt` (not the Python 3.12 CPU transport CI
+environment). This is an **installation candidate**, not a GPU-validated
+fully transitive lockfile or proof of compatibility with newer GPUs/drivers.
+
+Prepare an isolated non-production environment; **do not run a download or
+installer against the working RT1 production server**. Do not overwrite an
+existing MuseTalk checkout or avatar. Review licenses and the shell commands
+before running.
+
+```sh
+git clone https://github.com/TMElyralab/MuseTalk.git /opt/MuseTalk
+cd /opt/MuseTalk
+git checkout --detach 0a89dec45a0192b824e3cf4daf96c239440c5ed8
+
+# Requires an existing conda installation and appropriate NVIDIA driver.
+conda create -n vpr-musetalk-v15 python=3.10 -y
+conda activate vpr-musetalk-v15
+python -m pip install torch==2.0.1 torchvision==0.15.2 \\
+  torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118
+python -m pip install -r requirements.txt
+python -m pip install 'aiortc>=1.10,<2'
+python -m pip install -U openmim
+mim install mmengine
+mim install 'mmcv==2.0.1'
+mim install 'mmdet==3.1.0'
+mim install 'mmpose==1.1.0'
+python -m pip check
+python /opt/Virtual-Persona-Runtime/scripts/rt1_musetalk_environment.py
+```
+
+This explicitly checks every directly pinned upstream runtime dependency,
+including the MMLab trio, before loading CUDA. It intentionally fails on
+Python/package drift, and reports that no CUDA acceptance took place. If the
+MMLab package installer upgrades another pinned package, **do not bypass
+the failure**; resolve the environment on the isolated build host and capture
+an approved `pip freeze` and wheel hashes before promotion. A full
+transitive dependency lock and GPU acceptance are still missing.
+
+The upstream weight download command obtains more models than the live RT1
+renderer needs, including preparation components; run it **only in the
+approved offline preparation environment**. Keep all downloaded weights and
+prepared face images out of Git. Then run the zero-GPU source/assets
+preflight below, followed by actual CUDA and browser evidence.
+
 ## Prepared face integrity gate
 
 A reviewed Persona ID/version by itself is not proof that the operator's
