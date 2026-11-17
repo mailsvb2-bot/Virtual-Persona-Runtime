@@ -229,7 +229,7 @@ fn owner_provision(request: &mut tiny_http::Request) -> Rt1HttpResult {
 }
 
 /// Owner-scoped read-only snapshot from the ONE canonical durable workspace.
-/// Authentication uses the owner secret; no browser-supplied PersonaVersion,
+/// Authentication uses the owner secret; no browser-supplied `PersonaVersion`,
 /// readiness or publication state is trusted and no visitor bearer is returned.
 fn owner_status(request: &mut tiny_http::Request) -> Rt1HttpResult {
     let body: OwnerToken = parse_json(request)?;
