@@ -36,9 +36,58 @@ pub(super) fn publication_error_response(reason: &str) -> HttpResponse {
     }
 }
 
+/// Preserve only reviewed stable RT0 reason codes for a visitor turn.
+/// Unknown errors (including provider messages/credentials) are redacted.
+/// This is a response mapper, never a second policy or provider decision.
+pub(super) fn turn_error_response(reason: &str, voice: bool) -> HttpResponse {
+    let (status, code) = match reason {
+        "RT1_VISITOR_REVOKED" | "AUTH_REVOKED" => (409, "AUTH_REVOKED"),
+        "AUTH_EXPIRED" => (409, "AUTH_EXPIRED"),
+        "AUTH_SCOPE_DENIED" => (403, "AUTH_SCOPE_DENIED"),
+        "CONSENT_REQUIRED" => (403, "CONSENT_REQUIRED"),
+        "EGRESS_DENIED" | "EGRESS_LOCAL_ONLY" => (403, "EGRESS_DENIED"),
+        "PROVIDER_RATE_LIMITED" => (429, "PROVIDER_RATE_LIMITED"),
+        "PROVIDER_TIMEOUT" => (504, "PROVIDER_TIMEOUT"),
+        "PROVIDER_UNAVAILABLE" | "PROVIDER_AUTH_DENIED" => (503, "PROVIDER_UNAVAILABLE"),
+        "BUDGET_EXHAUSTED" => (409, "BUDGET_EXHAUSTED"),
+        "TURN_CANCELLED" => (409, "TURN_CANCELLED"),
+        "PREPARATION_FAILED" => (503, "PREPARATION_FAILED"),
+        "INVALID_INPUT" => (400, "INVALID_INPUT"),
+        "RT1_MICROPHONE_QUEUE_UNAVAILABLE" if voice => (503, "RT1_MICROPHONE_QUEUE_UNAVAILABLE"),
+        "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED" => (502, "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"),
+        _ if voice => (409, "RT1_VISITOR_VOICE_DENIED"),
+        _ => (409, "RT1_VISITOR_TEXT_DENIED"),
+    };
+    error_response(status, code)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visitor_turn_reasons_keep_only_safe_canonical_codes() {
+        for (reason, status) in [
+            ("AUTH_REVOKED", 409),
+            ("AUTH_SCOPE_DENIED", 403),
+            ("PROVIDER_UNAVAILABLE", 503),
+            ("PROVIDER_RATE_LIMITED", 429),
+            ("PROVIDER_TIMEOUT", 504),
+            ("BUDGET_EXHAUSTED", 409),
+            ("TURN_CANCELLED", 409),
+            ("RT1_MICROPHONE_QUEUE_UNAVAILABLE", 503),
+        ] {
+            assert_eq!(turn_error_response(reason, true).status_code().0, status);
+        }
+        // Unknown provider errors may contain secrets: never project them.
+        assert_eq!(turn_error_response("api-key=private", true).status_code().0, 409);
+        assert_eq!(turn_error_response("api-key=private", false).status_code().0, 409);
+        assert_eq!(
+            turn_error_response("RT1_MICROPHONE_QUEUE_UNAVAILABLE", false)
+                .status_code().0,
+            409
+        );
+    }
 
     #[test]
     fn publication_reports_verifiable_media_transport_blockers() {
