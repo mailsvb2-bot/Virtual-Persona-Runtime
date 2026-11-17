@@ -32,6 +32,45 @@ PCM_WINDOW_BYTES = PCM_WINDOW_SAMPLES * PCM_BYTES_PER_SAMPLE
 MAX_AUDIO_CHUNKS = 4
 MAX_VIDEO_FRAMES = 25
 
+# These are precisely the upstream model files loaded by the RT1 runtime.
+# Match the independent offline preflight to prevent drift.
+REQUIRED_MODEL_FILES = (
+    "models/musetalkV15/unet.pth",
+    "models/musetalkV15/musetalk.json",
+    "models/whisper/config.json",
+    "models/whisper/preprocessor_config.json",
+    "models/whisper/pytorch_model.bin",
+    "models/sd-vae/config.json",
+    "models/sd-vae/diffusion_pytorch_model.bin",
+)
+
+
+def approved_model_digest(root: str | Path) -> str:
+    """Hash the exact model/config inputs before torch or pickle executes.
+
+    The independent deployment pin is not proof of copyright or consent.
+    Keep the approved model files immutable after the check to avoid TOCTOU.
+    """
+    base = Path(root).resolve(strict=True)
+    if not base.is_dir():
+        raise RuntimeError("MuseTalk model root missing")
+    digest = hashlib.sha256(b"VPR-MuseTalk-runtime-weights-v1\\0")
+    for name in REQUIRED_MODEL_FILES:
+        file = base / name
+        if file.is_symlink() or not file.is_file():
+            raise RuntimeError(f"missing or symlinked MuseTalk model: {name}")
+        size = file.stat().st_size
+        if size == 0:
+            raise RuntimeError(f"empty MuseTalk model: {name}")
+        key = name.encode("utf-8")
+        digest.update(len(key).to_bytes(4, "big"))
+        digest.update(key)
+        digest.update(size.to_bytes(8, "big"))
+        with file.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    return digest.hexdigest()
+
 
 def prepared_avatar_digest(avatar_dir: str | Path) -> str:
     """Digest exactly the prepared face data consumed by this renderer.
@@ -116,6 +155,11 @@ class MuseTalkRenderer:
         actual = prepared_avatar_digest(avatar)
         if not hmac.compare_digest(actual, pinned):
             raise RuntimeError("prepared Persona avatar digest mismatch")
+        model_pin = os.environ.get("RT1_MUSETALK_MODELS_SHA256", "")
+        if len(model_pin) != 64 or any(ch not in "0123456789abcdef" for ch in model_pin):
+            raise RuntimeError("RT1_MUSETALK_MODELS_SHA256 pin required")
+        if not hmac.compare_digest(approved_model_digest(root_path), model_pin):
+            raise RuntimeError("approved MuseTalk model weights digest mismatch")
         # Load only after local path, weights and CUDA checks. No implicit downloads.
         import torch
         if not torch.cuda.is_available() or gpu_id >= torch.cuda.device_count() or gpu_id < 0:
