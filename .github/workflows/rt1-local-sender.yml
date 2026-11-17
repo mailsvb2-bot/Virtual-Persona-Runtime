@@ -5,6 +5,7 @@ on:
     paths:
       - 'scripts/rt1_aiortc_backend.py'
       - 'scripts/rt1_musetalk_renderer.py'
+      - 'scripts/rt1_musetalk_offline_preflight.py'
       - 'scripts/rt1_media_worker_*.py'
       - 'tests/e2e/test_rt1_*.py'
       # RT1 conversation/egress changes must re-run the actual worker lifecycle,
@@ -50,6 +51,7 @@ jobs:
             test_rt1_aiortc_backend_timeout.py \
             test_rt1_musetalk_renderer.py \
             test_rt1_musetalk_asset_digest.py \
+            test_rt1_musetalk_offline_preflight.py \
             test_rt1_musetalk_gpu_acceptance.py \
             test_rt1_webrtc_rtp_revoke.py; do
             python "tests/e2e/$test" -v
