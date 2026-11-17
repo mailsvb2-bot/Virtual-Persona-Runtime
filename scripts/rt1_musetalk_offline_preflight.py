@@ -15,6 +15,7 @@ import sys
 
 from rt1_musetalk_renderer import (
     REQUIRED_MODEL_FILES, approved_model_digest, prepared_avatar_digest,
+    verify_upstream_source,
 )
 
 APIS = {
@@ -76,15 +77,7 @@ def inspect(root: Path, avatar: Path, *, revision: str, digest: str,
     root, avatar = root.resolve(strict=True), avatar.resolve(strict=True)
     if not root.is_dir() or not avatar.is_dir():
         raise ValueError("MuseTalk root and prepared avatar must be directories")
-    def git(*args):
-        return subprocess.check_output(
-            ["git", "-C", str(root), *args], text=True,
-            stderr=subprocess.DEVNULL, timeout=10
-        ).strip()
-    if git("rev-parse", "HEAD") != revision:
-        raise ValueError("MuseTalk source revision differs from approved commit")
-    if git("status", "--porcelain", "--untracked-files=all"):
-        raise ValueError("modified or untracked MuseTalk source files (review build tree)")
+    verify_upstream_source(root, revision)
     check_apis(root)
     for path in MODEL_FILES:
         file = root / path
