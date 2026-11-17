@@ -10,12 +10,11 @@ use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
 use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
-use crate::state::{
-    LabSignalBundle, LabVoiceResult, LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest,
-};
+use crate::state::{LabSignalBundle, LabVoiceResult, OwnerLabEngine};
 
 #[path = "rt1_visitor_browser_delivery.rs"]
 mod browser_delivery;
+pub use browser_delivery::Rt1BrowserDeliveryGuard;
 #[path = "rt1_visitor_conversation_helpers.rs"]
 mod helpers;
 #[path = "rt1_visitor_interrupt_stop.rs"]
@@ -26,8 +25,8 @@ mod signaling;
 mod text_egress;
 #[path = "rt1_visitor_voice_capability.rs"]
 mod voice_capability;
-#[path = "rt1_visitor_voice_stream_staging.rs"]
-mod voice_stream_staging;
+#[path = "rt1_visitor_voice_streaming.rs"]
+mod voice_streaming;
 use helpers::{
     diagnostic_operation_id, diagnostic_signal_bundle, finish_close,
     revoked_diagnostic_offer_error, validate_microphone_audio,
@@ -139,44 +138,22 @@ impl Rt1VisitorConversation {
             return manager.close(&id).and(Err(error));
         }
 
-        let startup_interrupt = Arc::clone(&interrupt);
-        let started =
-            engine.start_visitor_with_interrupt(OwnerLabStartRequest { consent }, move |handle| {
-                *startup_interrupt.turn.lock() = Some(handle.clone());
-                if startup_interrupt.cancelled.load(Ordering::Acquire) {
-                    let _ = handle.interrupt();
-                }
-            });
-        *interrupt.turn.lock() = None;
-        let bundle = match started {
+        let bundle = match helpers::start_engine_with_provider_egress(
+            &manager,
+            &id,
+            &mut engine,
+            consent,
+            &interrupt,
+        ) {
             Ok(bundle) => bundle,
             Err(error) => {
-                // A failed remote CREATE can still have allocated an avatar.
-                // Never treat manager.close() as proof that the remote sender
-                // stopped; explicitly require the canonical provider receipt.
-                // A provider error can precede establishment of the visitor
-                // session, so STOP may not yet have an addressable target.
-                // Report the cleanup uncertainty rather than claim a receipt.
-                // The canonical engine can fail after creating a provider
-                // session. If a real stop-only handle exists, failure to close
-                // it must be surfaced as unconfirmed remote shutdown.
-                let has_sender = engine.visitor_avatar_stop_handle().is_some();
-                let cleanup = if has_sender {
-                    Some(engine.stop_visitor_provider_confirmed())
-                } else {
-                    None
-                };
-                let _ = manager.close(&id);
-                if remote
-                    .as_ref()
-                    .is_some_and(|worker| worker.revoke_confirmed().is_err())
-                {
-                    return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into());
-                }
-                if matches!(cleanup, Some(Err(_))) {
-                    return Err("RT1_PROVIDER_START_FAILED_STOP_UNCONFIRMED".into());
-                }
-                return Err(error.code().to_owned());
+                return Err(helpers::cleanup_failed_start(
+                    &manager,
+                    &id,
+                    &mut engine,
+                    remote.as_deref(),
+                    error,
+                ));
             }
         };
         if let Some(worker) = &remote
@@ -488,19 +465,6 @@ impl Rt1VisitorConversation {
         Ok(())
     }
 
-    /// Streaming is fail-closed: pre/post checks cannot protect egress callbacks.
-    /// Buffered and streaming voice share the unsupported egress boundary.
-    ///
-    /// # Errors
-    /// Always denies unsupported visitor media delivery.
-    pub fn voice_turn_streaming(
-        &self,
-        _pcm_s16le_mono_16khz: Vec<u8>,
-        _emit_segment: impl FnMut(LabVoiceSegment) -> Result<(), String>,
-    ) -> Result<LabVoiceResult, String> {
-        Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())
-    }
-
     /// True only for the durable worker path that verifies both remote RTP
     /// sender tracks stopped. Canonical D-ID `LiveKit` Echo close is a local
     /// publisher disconnect, not authenticated remote video termination.
@@ -554,9 +518,11 @@ impl Drop for Rt1VisitorConversation {
     fn drop(&mut self) {
         let _ = self.manager.close(&self.id);
         self.interrupt.stop();
-        // Best-effort retry is never treated as a durable STOP receipt.
+        // The HTTP state retains the canonical remote STOP handle in its
+        // cleanup registry. Drop must only wake that reconciler: a synchronous
+        // worker request here can block whichever thread releases the final Arc.
         if let Some(remote) = &self.remote {
-            let _ = remote.revoke_confirmed();
+            remote.request_revoke();
         }
         // Drop cannot wait for a provider that still owns the engine mutex.
         // This is best-effort cleanup, never a verified remote STOP receipt.

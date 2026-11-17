@@ -29,19 +29,30 @@ class Backend:
         self.allocations = 0
         self.stops = 0
         self.pcm_pushes = []
+        self.pcm_final_markers = []
         self.video_renderer_ready = False
+        self.bound_identity = None
 
     def persona_video_ready(self):
         # This HTTP fixture tests the readiness contract only; it does not
         # claim that a real renderer or human-visible avatar exists.
         return self.video_renderer_ready
 
-    def push_pcm(self, operation_id, session_id, generation, pcm):
+    def persona_identity(self):
+        return self.bound_identity
+
+    def push_pcm(self, operation_id, session_id, generation, pcm, *, final=False):
         self.pcm_pushes.append((operation_id, session_id, generation, pcm))
+        self.pcm_final_markers.append(final)
 
     def allocate(self, operation_id, generation):
         self.allocations += 1
         return "media-1"
+
+    def allocate_bounded(self, operation_id, generation, timeout, cancel_requested):
+        if cancel_requested.is_set():
+            raise RuntimeError("CREATE cancelled")
+        return self.allocate(operation_id, generation)
 
     def stop(self, operation_id, session_id, generation):
         self.stops += 1
@@ -156,6 +167,44 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(
             probe("test-secret"),
             (503, {"ready": False, "persona_video_ready": True}),
+        )
+
+    def test_authenticated_unresolved_operation_listing_uses_durable_ledger(self):
+        def list_operations(token):
+            request = Request(
+                f"http://127.0.0.1:{self.server.server_port}/v1/avatar/operations",
+                headers={"Authorization": "Bearer " + token},
+            )
+            try:
+                with urlopen(request, timeout=3) as response:
+                    return response.status, json.load(response)
+            except HTTPError as error:
+                return error.code, json.load(error)
+
+        self.assertEqual(
+            list_operations("wrong"),
+            (401, {"error": "unauthorized"}),
+        )
+        self.assertEqual(
+            list_operations("test-secret"),
+            (200, {"operations": []}),
+        )
+        self.assertEqual(self.request("PUT")[0], 200)
+        status, body = list_operations("test-secret")
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body["operations"],
+            [{
+                "operation_id": "operation-1",
+                "generation": 1,
+                "phase": "active",
+            }],
+        )
+        self.assertNotIn("session_id", body["operations"][0])
+        self.assertEqual(self.request("DELETE")[0], 200)
+        self.assertEqual(
+            list_operations("test-secret"),
+            (200, {"operations": []}),
         )
 
     def test_slow_drip_cannot_reset_total_body_deadline(self):
@@ -579,6 +628,90 @@ class HttpLifecycleTests(unittest.TestCase):
         self.url = self.url.replace("operation-1", "operation-2")
         self.assertEqual(self.request("PUT")[0], 200)
         self.assertEqual(self.backend.allocations, 2)
+        self.assertEqual(self.request("DELETE")[0], 200)
+
+    def test_gpu_binding_rejects_stale_or_cross_persona_create(self):
+        self.backend.bound_identity = ("approved-persona", 7)
+        ready = Request(
+            "http://127.0.0.1:" + str(self.server.server_port)
+            + "/v1/avatar/readiness",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        with urlopen(ready, timeout=3) as response:
+            state = json.load(response)
+        self.assertEqual(state["persona_id"], "approved-persona")
+        self.assertEqual(state["persona_version"], 7)
+
+        def put(body):
+            req = Request(
+                self.url, data=json.dumps(body).encode(),
+                method="PUT",
+                headers={"Authorization": "Bearer test-secret",
+                         "Content-Type": "application/json"},
+            )
+            try:
+                with urlopen(req, timeout=3) as response:
+                    return response.status, json.load(response)
+            except HTTPError as error:
+                return error.code, json.load(error)
+
+        for payload in (
+            {"generation": 1},
+            {"generation": 1, "persona_id": "another-owner", "persona_version": 7},
+            {"generation": 1, "persona_id": "approved-persona", "persona_version": 6},
+            {"generation": 1, "persona_id": "approved-persona", "persona_version": True},
+        ):
+            with self.subTest(payload=payload):
+                self.assertEqual(put(payload)[0], 400)
+                self.assertEqual(self.backend.allocations, 0)
+                self.assertIsNone(self.lifecycle.status("operation-1"))
+        good = {"generation": 1, "persona_id": "approved-persona",
+                "persona_version": 7}
+        self.assertEqual(put(good)[0], 200)
+        self.assertEqual(self.backend.allocations, 1)
+        self.assertEqual(self.request("DELETE")[0], 200)
+
+    def test_authenticated_final_pcm_marker_reaches_existing_worker_sender(self):
+        pcm = bytes([1, 0]) * 320
+        self.assertEqual(self.request("PUT")[0], 200)
+        url = self.url + "/pcm"
+        body = {
+            "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+            "sample_rate_hz": 16000,
+            "channels": 1,
+            "final": True,
+        }
+        req = Request(
+            url, data=json.dumps(body).encode(), method="POST",
+            headers={"Authorization": "Bearer test-secret",
+                     "Content-Type": "application/json"},
+        )
+        with urlopen(req, timeout=3) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(json.load(response)["accepted_bytes"], len(pcm))
+        self.assertEqual(self.backend.pcm_pushes, [
+            ("operation-1", "media-1", 1, pcm)
+        ])
+        self.assertEqual(self.backend.pcm_final_markers, [True])
+        self.assertEqual(self.request("DELETE")[0], 200)
+
+    def test_non_boolean_final_marker_is_rejected_without_media_side_effect(self):
+        pcm = bytes([1, 0]) * 320
+        self.assertEqual(self.request("PUT")[0], 200)
+        req = Request(
+            self.url + "/pcm",
+            data=json.dumps({
+                "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+                "sample_rate_hz": 16000, "channels": 1, "final": "true",
+            }).encode(),
+            method="POST",
+            headers={"Authorization": "Bearer test-secret",
+                     "Content-Type": "application/json"},
+        )
+        with self.assertRaises(HTTPError) as response:
+            urlopen(req, timeout=3)
+        self.assertEqual(response.exception.code, 400)
+        self.assertEqual(self.backend.pcm_pushes, [])
         self.assertEqual(self.request("DELETE")[0], 200)
 
     def test_pcm_uses_existing_authenticated_session_and_stops_after_revoke(self):
@@ -1385,6 +1518,20 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertIs(body["stop_confirmed"], False)
         self.assertEqual(self.request("PUT")[0], 409)
         self.assertEqual(self.backend.allocations, 0)
+
+
+    def test_stop_lock_contention_has_a_distinct_retryable_conflict(self):
+        self.assertEqual(self.request("PUT")[0], 200)
+        with exclusive_stop_when_idle(self.lifecycle):
+            status, body = self.request("DELETE")
+        self.assertEqual(status, 409)
+        self.assertEqual(body, {"error": "STOP_IN_PROGRESS", "stop_confirmed": False})
+
+        status, receipt = self.request("DELETE")
+        self.assertEqual(status, 200)
+        self.assertIs(receipt["audio_stopped"], True)
+        self.assertIs(receipt["video_stopped"], True)
+        self.assertEqual(self.backend.stops, 1)
 
 
 if __name__ == "__main__":

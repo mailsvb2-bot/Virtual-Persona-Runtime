@@ -169,6 +169,21 @@ def handler_for(
             if parts.query or parts.fragment:
                 self._send(400, {"error": "invalid request"})
                 return
+            if parts.path == "/v1/avatar/operations":
+                if method != "GET":
+                    self._send(405, {"error": "method not allowed"})
+                    return
+                operations = [
+                    {
+                        "operation_id": operation_id,
+                        "generation": generation,
+                        "phase": phase,
+                    }
+                    for operation_id, generation, phase
+                    in lifecycle.unresolved_operations()
+                ]
+                self._send(200, {"operations": operations})
+                return
             segments = parts.path.strip("/").split("/")
             if segments[:3] != ["v1", "avatar", "operations"] or (
                 len(segments) != 4 and not (len(segments) == 5 and segments[4] in ("offer", "answer", "pcm"))
@@ -234,7 +249,11 @@ def handler_for(
                 try:
                     payload = self._read_json_body(45000)
                     if (not isinstance(payload, dict) or
-                            set(payload) != {"pcm_base64", "sample_rate_hz", "channels"} or
+                            set(payload) not in (
+                                {"pcm_base64", "sample_rate_hz", "channels"},
+                                {"pcm_base64", "sample_rate_hz", "channels", "final"},
+                            ) or
+                            type(payload.get("final", False)) is not bool or
                             type(payload["sample_rate_hz"]) is not int or
                             payload["sample_rate_hz"] != 16000 or
                             type(payload["channels"]) is not int or
@@ -272,7 +291,14 @@ def handler_for(
                         else:
                             try:
                                 push_attempted = True
-                                lifecycle._backend.push_pcm(operation_id, row[2], row[0], pcm)
+                                if payload.get("final", False):
+                                    lifecycle._backend.push_pcm(
+                                        operation_id, row[2], row[0], pcm, final=True
+                                    )
+                                else:
+                                    lifecycle._backend.push_pcm(
+                                        operation_id, row[2], row[0], pcm
+                                    )
                             except Exception:
                                 # A failed ACK may follow partially queued PCM.
                                 pcm_failed = True
@@ -416,6 +442,16 @@ def handler_for(
                 generation = payload["generation"]
                 if type(generation) is not int or generation < 1:
                     raise ValueError("invalid generation")
+                if method == "PUT":
+                    identity = lifecycle.persona_identity()
+                    if identity is not None:
+                        # The bearer token alone is insufficient to choose
+                        # another owner's GPU face. Check against the same
+                        # renderer binding probed at public publication.
+                        if (payload.get("persona_id") != identity[0]
+                                or type(payload.get("persona_version")) is not int
+                                or payload["persona_version"] != identity[1]):
+                            raise ValueError("Persona renderer identity mismatch")
             except (ValueError, KeyError, TypeError, OSError, json.JSONDecodeError):
                 self._send(400, {"error": "invalid request"})
                 return
@@ -489,7 +525,12 @@ def handler_for(
                             "audio_stopped": receipt.audio_stopped,
                             "video_stopped": receipt.video_stopped,
                         })
-            except (RuntimeError, KeyError):
+            except RuntimeError as error:
+                if str(error) == "remote STOP already in progress; shutdown not confirmed":
+                    self._send(409, {"error": "STOP_IN_PROGRESS", "stop_confirmed": False})
+                else:
+                    self._send(409, {"error": "unresolved media allocation", "stop_confirmed": False})
+            except KeyError:
                 self._send(409, {"error": "unresolved media allocation", "stop_confirmed": False})
             except Exception:
                 self._send(503, {"error": "worker failure", "stop_confirmed": False})

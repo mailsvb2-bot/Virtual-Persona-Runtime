@@ -35,9 +35,14 @@ fn owner_revoke_request_does_not_wait_for_worker_or_forge_stop() {
 }
 
 #[test]
-fn remote_stop_pending_never_confirms_and_can_be_reconciled() {
+fn remote_stop_pending_retries_until_both_tracks_are_confirmed() {
+    use std::sync::mpsc;
+
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let (pending_tx, pending_rx) = mpsc::channel();
+    let (retry_tx, retry_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
     let worker = std::thread::spawn(move || {
         for attempt in 0..2 {
             let (mut socket, _) = listener.accept().unwrap();
@@ -57,36 +62,46 @@ fn remote_stop_pending_never_confirms_and_can_be_reconciled() {
                 }
             }
             assert!(request.starts_with(b"DELETE /v1/avatar/operations/pending-stop "));
-            let body = if attempt == 0 {
-                r#"{"operation_id":"pending-stop","generation":3,"session_id":"remote-session","audio_stopped":false,"video_stopped":false}"#
+            if attempt == 0 {
+                let body = r#"{"operation_id":"pending-stop","stop_confirmed":false}"#;
+                write!(
+                    socket,
+                    "HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+                pending_tx.send(()).unwrap();
             } else {
-                r#"{"operation_id":"pending-stop","generation":3,"session_id":"remote-session","audio_stopped":true,"video_stopped":true}"#
-            };
-            let status = if attempt == 0 {
-                "202 Accepted"
-            } else {
-                "200 OK"
-            };
-            write!(
-                socket,
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .unwrap();
+                retry_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                let body = r#"{"operation_id":"pending-stop","generation":3,"session_id":"remote-session","audio_stopped":true,"video_stopped":true}"#;
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
         }
     });
     let client =
         RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
-    let remote = Rt1RemoteMediaRevocation::new(client, "pending-stop".into(), 3).unwrap();
+    let remote = Arc::new(Rt1RemoteMediaRevocation::new(client, "pending-stop".into(), 3).unwrap());
     assert!(!remote.is_revoked());
     assert!(!remote.is_stop_confirmed());
-    assert_eq!(
-        remote.revoke_confirmed().unwrap_err(),
-        "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"
-    );
+
+    let stopping = Arc::clone(&remote);
+    let stop = std::thread::spawn(move || stopping.revoke_confirmed());
+    pending_rx.recv_timeout(Duration::from_secs(3)).unwrap();
     assert!(remote.is_revoked());
     assert!(!remote.is_stop_confirmed());
-    remote.revoke_confirmed().unwrap();
+    retry_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(
+        !remote.is_stop_confirmed(),
+        "a pending worker response cannot attest both remote senders"
+    );
+    release_tx.send(()).unwrap();
+    stop.join().unwrap().unwrap();
     assert!(remote.is_stop_confirmed());
     worker.join().unwrap();
 }
@@ -176,7 +191,7 @@ fn owner_revoke_during_remote_answer_never_returns_stale_success() {
 }
 
 #[test]
-fn raced_accepted_answer_compensates_stop_before_return_and_preserves_uncertainty() {
+fn raced_accepted_answer_retries_pending_stop_before_returning_revoked() {
     use std::sync::mpsc;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -209,19 +224,18 @@ fn raced_accepted_answer_compensates_stop_before_return_and_preserves_uncertaint
                     "200 OK",
                     r#"{"operation_id":"raced-pending","accepted":true}"#,
                 )
+            } else if attempt == 1 {
+                assert!(request.starts_with(b"DELETE /v1/avatar/operations/raced-pending "));
+                (
+                    "202 Accepted",
+                    r#"{"operation_id":"raced-pending","stop_confirmed":false}"#,
+                )
             } else {
                 assert!(request.starts_with(b"DELETE /v1/avatar/operations/raced-pending "));
-                if attempt == 1 {
-                    (
-                        "202 Accepted",
-                        r#"{"operation_id":"raced-pending","stop_confirmed":false}"#,
-                    )
-                } else {
-                    (
-                        "200 OK",
-                        r#"{"operation_id":"raced-pending","generation":1,"session_id":"sender","audio_stopped":true,"video_stopped":true}"#,
-                    )
-                }
+                (
+                    "200 OK",
+                    r#"{"operation_id":"raced-pending","generation":1,"session_id":"sender","audio_stopped":true,"video_stopped":true}"#,
+                )
             };
             write!(
                 socket,
@@ -242,14 +256,12 @@ fn raced_accepted_answer_compensates_stop_before_return_and_preserves_uncertaint
     // request holds the signaling/STOP gate; do not start another runtime.
     remote.revoked.store(true, Ordering::Release);
     release_tx.send(()).unwrap();
-    assert_eq!(
-        answer.join().unwrap().unwrap_err(),
-        "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"
-    );
-    assert!(!remote.is_stop_confirmed());
+    assert_eq!(answer.join().unwrap().unwrap_err(), "RT1_VISITOR_REVOKED");
     assert!(remote.is_revoked());
-    remote.revoke_confirmed().unwrap();
-    assert!(remote.is_stop_confirmed());
+    assert!(
+        remote.is_stop_confirmed(),
+        "submit_answer must not return until both remote sender stops are confirmed"
+    );
     worker.join().unwrap();
 }
 
@@ -312,7 +324,7 @@ fn negative_answer_receipt_denies_signaling_and_still_allows_verified_revoke() {
 }
 
 #[test]
-fn failed_answer_with_pending_stop_stays_quarantined_until_retry_receipt() {
+fn failed_answer_retries_pending_stop_until_both_tracks_are_confirmed() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let worker = std::thread::spawn(move || {
@@ -325,7 +337,7 @@ fn failed_answer_with_pending_stop_stays_quarantined_until_retry_receipt() {
             (
                 "DELETE",
                 "202 Accepted",
-                r#"{"operation_id":"lost-answer","generation":8,"session_id":"sender-8","audio_stopped":false,"video_stopped":false}"#,
+                r#"{"operation_id":"lost-answer","stop_confirmed":false}"#,
             ),
             (
                 "DELETE",
@@ -368,16 +380,17 @@ fn failed_answer_with_pending_stop_stays_quarantined_until_retry_receipt() {
     let remote = Rt1RemoteMediaRevocation::new(client, "lost-answer".into(), 8).unwrap();
     assert_eq!(
         remote.submit_answer("v=0\r\n").unwrap_err(),
-        "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"
+        "RT1_REMOTE_ANSWER_UNCONFIRMED"
     );
     assert!(remote.is_revoked());
-    assert!(!remote.is_stop_confirmed());
+    assert!(
+        remote.is_stop_confirmed(),
+        "failed SDP admission is quarantined and both remote senders are stopped"
+    );
     assert_eq!(
         remote.submit_answer("v=0\r\n").unwrap_err(),
         "RT1_VISITOR_REVOKED"
     );
-    remote.revoke_confirmed().unwrap();
-    assert!(remote.is_stop_confirmed());
     worker.join().unwrap();
 }
 
@@ -501,62 +514,8 @@ fn late_create_matching_early_stop_preserves_confirmed_shutdown() {
     worker.join().unwrap();
 }
 
-#[test]
-fn late_create_after_uncertain_stop_retries_compensation_without_owner_callback() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let endpoint = format!("http://{}", listener.local_addr().unwrap());
-    let worker = std::thread::spawn(move || {
-        for (status, confirmed) in [("202 Accepted", false), ("200 OK", true)] {
-            let (mut socket, _) = listener.accept().unwrap();
-            socket
-                .set_read_timeout(Some(Duration::from_secs(3)))
-                .unwrap();
-            let mut request = Vec::new();
-            let mut buffer = [0_u8; 2048];
-            loop {
-                let read = socket.read(&mut buffer).unwrap();
-                if read == 0 {
-                    break;
-                }
-                request.extend_from_slice(&buffer[..read]);
-                if request.windows(4).any(|part| part == b"\r\n\r\n") {
-                    break;
-                }
-            }
-            assert!(request.starts_with(b"DELETE /v1/avatar/operations/late-uncertain "));
-            let body = serde_json::json!({
-                "operation_id": "late-uncertain",
-                "generation": 12,
-                "session_id": "sender-12",
-                "audio_stopped": confirmed,
-                "video_stopped": confirmed,
-            })
-            .to_string();
-            write!(
-                socket,
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .unwrap();
-        }
-    });
-    let client =
-        RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
-    let remote = Rt1RemoteMediaRevocation::new(client, "late-uncertain".into(), 12).unwrap();
-    assert_eq!(
-        remote.revoke_confirmed().unwrap_err(),
-        "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"
-    );
-    assert!(remote.is_revoked());
-    assert!(!remote.is_stop_confirmed());
-    // No second revoke call: the late CREATE callback must compensate itself.
-    assert_eq!(
-        remote.record_created_session("sender-12").unwrap_err(),
-        "RT1_VISITOR_REVOKED"
-    );
-    assert!(remote.is_stop_confirmed());
-    worker.join().unwrap();
-}
-
 #[path = "rt1_remote_media_revocation_concurrency_tests.rs"]
 mod concurrency_tests;
+
+#[path = "rt1_remote_media_revocation_late_create_tests.rs"]
+mod late_create_tests;

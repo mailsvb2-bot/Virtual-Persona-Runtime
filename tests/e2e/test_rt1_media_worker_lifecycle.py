@@ -37,6 +37,11 @@ class Sender:
                 raise TimeoutError("backend hung")
         return "session-a"
 
+    def allocate_bounded(self, operation_id, generation, timeout, cancel_requested):
+        # Deliberately non-cooperative fixture: return a late ID so the
+        # lifecycle proves it can durably compensate an allocation race.
+        return self.allocate(operation_id, generation)
+
     def stop(self, operation_id, session_id, generation):
         self.stopped += 1
         return mod.StopReceipt(
@@ -54,37 +59,67 @@ class LifecycleTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_expired_create_without_durable_cancel_still_stops_late_sender(self):
-        # Simulate an unavailable SQLite CANCEL write after the HTTP deadline.
-        # The in-process CREATE must never commit active and orphan a sender,
-        # even when the durable tombstone could not be written immediately.
-        # This is a controlled backend, NOT evidence of real D-ID RTP STOP.
+    def test_cancelled_create_persists_late_id_for_retryable_compensation(self):
+        # Simulated provider ignores cancellation and returns its allocated ID
+        # late. The durable owner must never commit the sender active.
         self.sender.wait_on_create = True
-        try:
-            with patch.object(
-                self.worker,
-                "cancel_bounded",
-                side_effect=RuntimeError("ledger temporarily unavailable"),
-            ):
-                with self.assertRaisesRegex(
-                    RuntimeError, "cancellation persistence unavailable"
-                ):
-                    self.worker.create_bounded("deadline-ledger-error", 1, 0.03)
-        finally:
+        failures = []
+
+        def create():
+            try:
+                self.worker.create_bounded("late-id", 1, 3.0)
+            except Exception as error:
+                failures.append(error)
+
+        with patch.object(
+            self.worker,
+            "cancel_bounded",
+            side_effect=RuntimeError("STOP temporarily unavailable"),
+        ):
+            task = threading.Thread(target=create, name="test-late-create")
+            task.start()
+            self.assertTrue(self.sender.started.wait(1))
+            self.assertIsNone(self.worker.cancel("late-id", 1))
             self.sender.release.set()
-        deadline = time.monotonic() + 3
-        while time.monotonic() < deadline:
-            phase = self.worker.status("deadline-ledger-error")
-            if phase is not None and phase[1] == "stopped":
-                break
-            time.sleep(0.01)
+            task.join(2)
+            self.assertFalse(task.is_alive())
+            self.assertEqual(len(failures), 1)
+            self.assertRegex(str(failures[0]), "operation revoked during allocation")
+            self.assertEqual(
+                self.worker.status("late-id"), (1, "stopping", "session-a")
+            )
+        # The failed immediate STOP remains a durable retry target.
+        self.worker.reconcile()
+        self.assertEqual(self.worker.status("late-id"), (1, "stopped", "session-a"))
+        self.assertEqual(self.sender.stopped, 1)
+
+    def test_async_renderer_failure_reuses_durable_cancel_and_verified_stop(self):
+        self.worker.create("gpu-failure", 1)
+        self.sender.failed_renderer_sessions = lambda: (("gpu-failure", 1),)
+        self.worker.reconcile()
         self.assertEqual(
-            self.worker.status("deadline-ledger-error"),
-            (1, "stopped", "session-a"),
+            self.worker.status_with_stop_confirmation("gpu-failure"),
+            (1, "stopped", "session-a", True),
         )
         self.assertEqual(self.sender.stopped, 1)
-        # A failed CANCEL write cannot grant a new active sender.
-        self.assertEqual(self.worker.create("replacement", 1), "session-a")
+        # Reconciliation must not invent or duplicate remote STOP receipts.
+        self.worker.reconcile()
+        self.assertEqual(self.sender.stopped, 1)
+
+    def test_failed_gpu_stop_remains_uncertain_until_independent_receipt(self):
+        self.worker.create("gpu-uncertain", 1)
+        self.sender.failed_renderer_sessions = lambda: (("gpu-uncertain", 1),)
+        self.sender.partial = True
+        with self.assertRaisesRegex(RuntimeError, "STOP"):
+            self.worker.reconcile()
+        self.assertFalse(
+            self.worker.status_with_stop_confirmation("gpu-uncertain")[3]
+        )
+        self.sender.partial = False
+        self.worker.reconcile()
+        self.assertTrue(
+            self.worker.status_with_stop_confirmation("gpu-uncertain")[3]
+        )
 
     def test_idempotent_create_and_strict_stop(self):
         self.assertEqual(self.worker.create("op-a", 1), "session-a")
@@ -95,6 +130,39 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.worker.status("op-a")[1], "stopped")
         with self.assertRaises(RuntimeError):
             self.worker.create("op-a", 1)
+
+    def test_completed_stop_receipts_retire_only_after_sqlite_commit(self):
+        # The worker owns SQLite evidence; the backend cache is only an
+        # in-process retry bridge for STOP calls whose HTTP result was lost.
+        confirmed = []
+        def acknowledged(operation_id, session_id, generation):
+            row = self.worker._db.execute(
+                "SELECT phase, stop_verified FROM media_operations WHERE id=?",
+                (operation_id,),
+            ).fetchone()
+            self.assertEqual(row, ("stopped", 1))
+            confirmed.append((operation_id, session_id, generation))
+            return True
+        self.sender.acknowledge_durable_stop = acknowledged
+        self.worker.create("retire-on-commit", 1)
+        self.worker.cancel("retire-on-commit", 1)
+        self.assertEqual(confirmed, [("retire-on-commit", "session-a", 1)])
+        # Idempotent replay obtains proof from the durable ledger, never
+        # invents another sender STOP.
+        self.worker.cancel("retire-on-commit", 1)
+        self.assertEqual(self.sender.stopped, 1)
+
+    def test_unconfirmed_stop_does_not_release_backend_retry_receipt(self):
+        acknowledged = []
+        self.sender.acknowledge_durable_stop = lambda *args: acknowledged.append(args)
+        self.worker.create("stop-unconfirmed", 1)
+        self.sender.partial = True
+        with self.assertRaisesRegex(RuntimeError, "STOP"):
+            self.worker.cancel("stop-unconfirmed", 1)
+        self.assertEqual(acknowledged, [])
+        self.sender.partial = False
+        self.worker.cancel("stop-unconfirmed", 1)
+        self.assertEqual(acknowledged, [("stop-unconfirmed", "session-a", 1)])
 
     def test_dual_sender_stop_receipt_is_durable_across_restart(self):
         self.worker.create("verified-stop", 1)
@@ -182,96 +250,6 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.sender.created, 1)
         restarted.cancel("legacy-blocker", 1)
         self.assertEqual(restarted.create("replacement", 1), "session-a")
-
-    def _expire_create_reply_after_commit(self, operation_id):
-        # Deterministic CREATE deadline race: the backend has already
-        # committed the real sender ID, but the HTTP waiter loses its reply.
-        # This is a fake backend/queue, not a real D-ID RTP test.
-        real_queue = mod.Queue
-        created = threading.Event()
-        queue_count = 0
-
-        class LostCreateReplyQueue(real_queue):
-            def put(self, item, block=True, timeout=None):
-                super().put(item, block=block, timeout=timeout)
-                created.set()
-
-            def get(self, block=True, timeout=None):
-                if not created.wait(2):
-                    raise AssertionError("CREATE did not commit before timeout")
-                raise mod.Empty
-
-        def queue_factory(maxsize=0):
-            nonlocal queue_count
-            queue_count += 1
-            if queue_count == 1:
-                return LostCreateReplyQueue(maxsize=maxsize)
-            return real_queue(maxsize=maxsize)
-
-        with patch.object(mod, "Queue", new=queue_factory):
-            with self.assertRaisesRegex(RuntimeError, "CREATE deadline exceeded"):
-                self.worker.create_bounded(operation_id, 1, 0.2)
-
-    def _wait_for_stop_completion(self, operation_id):
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            if self.worker.status(operation_id)[1] in ("stopped", "uncertain"):
-                return
-            time.sleep(0.01)
-        self.fail("bounded compensating STOP did not complete")
-
-    def test_deadline_after_create_commit_compensates_when_cancel_write_fails(self):
-        # CREATE committed 'active' just before its reply was lost. Even if
-        # CANCEL persistence fails, the known sender must be STOPped rather
-        # than silently remaining active behind a deadline error.
-        with patch.object(
-            self.worker,
-            "cancel_bounded",
-            side_effect=RuntimeError("ledger temporarily unavailable"),
-        ):
-            self._expire_create_reply_after_commit("deadline-committed-ledger-error")
-        # Compensation is deliberately asynchronous: the HTTP deadline must
-        # not wait for a hung remote STOP. Await its durable receipt instead
-        # of racing the background worker immediately after the deadline.
-        self._wait_for_stop_completion("deadline-committed-ledger-error")
-        self.assertEqual(
-            self.worker.status("deadline-committed-ledger-error"),
-            (1, "stopped", "session-a"),
-        )
-        self.assertEqual(self.sender.stopped, 1)
-
-    def test_create_deadline_race_stops_already_committed_remote_sender(self):
-        self._expire_create_reply_after_commit("deadline-race")
-        self._wait_for_stop_completion("deadline-race")
-        self.assertEqual(
-            self.worker.status("deadline-race"),
-            (1, "stopped", "session-a"),
-        )
-        self.assertEqual(self.sender.stopped, 1)
-        # A *verified* dual-sender STOP releases the global quarantine.
-        self.assertEqual(self.worker.create("replacement", 1), "session-a")
-        self.assertEqual(self.sender.created, 2)
-
-    def test_create_deadline_race_failed_stop_recovers_after_restart(self):
-        self.sender.partial = True
-        self._expire_create_reply_after_commit("deadline-failed-stop")
-        self._wait_for_stop_completion("deadline-failed-stop")
-        self.assertEqual(
-            self.worker.status("deadline-failed-stop"),
-            (1, "uncertain", "session-a"),
-        )
-        self.assertEqual(self.sender.stopped, 1)
-        with self.assertRaises(RuntimeError):
-            self.worker.create("replacement", 1)
-        self.sender.partial = False
-        restarted = mod.MediaLifecycle(self.db, self.sender)
-        restarted.quarantine_after_restart()
-        restarted.reconcile()
-        self.assertEqual(
-            restarted.status("deadline-failed-stop"),
-            (1, "stopped", "session-a"),
-        )
-        self.assertEqual(self.sender.stopped, 2)
 
     def test_atomic_create_admission_across_worker_connections(self):
         # Two worker processes may share the durable ledger but not a Python lock.
@@ -727,6 +705,9 @@ class PendingSender:
     def allocate(self, operation_id, generation):
         print("CREATE_ENTERED", flush=True)
         time.sleep(120)
+
+    def allocate_bounded(self, operation_id, generation, timeout, cancel_requested):
+        return self.allocate(operation_id, generation)
 
     def stop(self, operation_id, session_id, generation):
         raise AssertionError("not reached")

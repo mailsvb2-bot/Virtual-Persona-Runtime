@@ -122,7 +122,11 @@ const server = http.createServer(async (request, response) => {
     return sendJson(response, 200, { ok: true, released });
   }
   if (request.method === "GET" && url.pathname === "/__state") {
-    return sendJson(response, 200, { requests });
+    return sendJson(response, 200, {
+      requests,
+      tts_hold_open: releaseHeldTtsResponse !== null,
+      hold_next_tts: holdNextTtsResponse,
+    });
   }
 
   if (request.method === "GET" && url.pathname === `/agents/${agentId}`) {
@@ -150,6 +154,13 @@ const server = http.createServer(async (request, response) => {
     const hold = holdNextTtsResponse;
     holdNextTtsResponse = false;
     const pcm = Buffer.alloc(hold ? 32 * 1024 : 640);
+    // A deterministic audible tone is enabled only by the RT1 browser fixture.
+    if (process.env.VPR_RT1_E2E_AUDIO_TONE === "true") {
+      for (let sample = 0; sample < 320; sample += 1) {
+        const value = Math.round(Math.sin((2 * Math.PI * 440 * sample) / 16000) * 6000);
+        pcm.writeInt16LE(value, sample * 2);
+      }
+    }
     const wav = Buffer.alloc(44 + pcm.length);
     wav.write("RIFF", 0);
     wav.writeUInt32LE(wav.length - 8, 4);
@@ -235,7 +246,7 @@ const server = http.createServer(async (request, response) => {
         "Этот ответ ",
         "должен начаться, но хвост обязан отмениться.",
         " Эта фраза не должна дойти до аватара.",
-        5_000,
+        Number(process.env.VPR_RT1_E2E_INTERRUPT_DELAY_MS ?? 5_000),
         250,
       );
     }

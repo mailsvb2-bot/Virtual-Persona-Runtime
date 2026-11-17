@@ -12,6 +12,9 @@ use vpr_owner_lab::{
 
 use super::{AppState, HttpResponse, error_response, json_response, parse_json};
 
+#[path = "http_rt1_transport.rs"]
+mod transport;
+
 /// This local-only diagnostic journey is not a released RT1 API.
 pub(super) fn enabled() -> bool {
     std::env::var("VPR_RT1_LOCAL_EXPERIMENT").as_deref() == Ok("true")
@@ -48,6 +51,8 @@ pub(super) struct Rt1HttpState {
     // Never hold this registry lock while doing provider network I/O.
     remote_cleanup: Mutex<HashMap<String, Arc<Rt1RemoteMediaRevocation>>>,
     cleanup_notify: Arc<(Mutex<u64>, Condvar)>,
+    transport_writers: Mutex<HashMap<String, vpr_runtime::TcpWriteRevocation>>,
+    pending_deliveries: Mutex<HashMap<String, transport::PendingDelivery>>,
 }
 
 #[path = "http_rt1_cleanup.rs"]
@@ -160,51 +165,8 @@ fn guarded_reply(
 /// Final RT1 HTTP dispatch is owned by this module, including the actual
 /// response write. Keeping this here avoids a second path around the CSRF
 /// checks and preserves the main server's architectural module-size limit.
-pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<AppState>) {
-    if !super::valid_post_headers(&request, &state.csrf_token, state.port) {
-        let _ = request.respond(error_response(403, "CSRF_DENIED"));
-        return;
-    }
-    if !enabled() {
-        let _ = request.respond(error_response(404, "NOT_FOUND"));
-        return;
-    }
-    let path = request.url().to_owned();
-    let Some(routed) = route_post(&path, &mut request, state) else {
-        let _ = request.respond(error_response(404, "NOT_FOUND"));
-        return;
-    };
-    if let Some(conversation) = routed.delivery {
-        // START and SDP/ICE may create or activate remote media. TEXT and
-        // VOICE can also dispatch provider speech before the final browser
-        // acknowledgement. If that acknowledgement is lost, quarantine the
-        // exact sender through the SAME canonical revocation reconciler.
-        // Only successful visitor routes provide this delivery lease.
-        let must_compensate = path == "/api/rt1/visitor/start"
-            || path == "/api/rt1/visitor/answer"
-            || path == "/api/rt1/visitor/ice"
-            || path == "/api/rt1/visitor/text"
-            || path == "/api/rt1/visitor/voice";
-        if let Ok(_lease) = conversation.begin_browser_delivery() {
-            if request.respond(routed.response).is_err() && must_compensate {
-                conversation.revoke_undelivered_start();
-            }
-        } else if must_compensate {
-            conversation.revoke_undelivered_start();
-            // Revocation intent is not a remote audio/video STOP receipt.
-            // Report the exact unconfirmed outcome without exposing the
-            // provider's private error payload to the visitor.
-            let response = delivery_denied_after_revoke(
-                conversation.has_remote_video_stop_receipt_path(),
-                conversation.remote_media_stop_confirmed(),
-            );
-            let _ = request.respond(response);
-        } else {
-            let _ = request.respond(error_response(409, "RT1_VISITOR_DELIVERY_DENIED"));
-        }
-    } else {
-        let _ = request.respond(routed.response);
-    }
+pub(super) fn respond_post(request: tiny_http::Request, state: &Arc<AppState>) {
+    transport::respond_post(request, state);
 }
 
 pub(super) fn route_post(
@@ -517,8 +479,11 @@ fn visitor_voice(
         return Err(error_response(400, "RT1_INVALID_MICROPHONE_AUDIO"));
     }
     let conversation = lookup(state, &body.session_id)?;
+    // Use the canonical pull-stream engine: STT/LLM/TTS phrases are
+    // delivered incrementally through the verified worker's authenticated
+    // PCM sender, not through browser-controlled speech commands.
     let result = conversation
-        .voice_turn(body.pcm)
+        .voice_turn_streaming(body.pcm)
         .map_err(|_| error_response(409, "RT1_VISITOR_VOICE_DENIED"))?;
     if !conversation.is_active() {
         return Err(error_response(409, "RT1_VISITOR_VOICE_DENIED"));

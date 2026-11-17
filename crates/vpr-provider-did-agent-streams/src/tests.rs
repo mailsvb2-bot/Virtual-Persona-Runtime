@@ -987,7 +987,17 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     // An Echo STOP is server-owned and contains no browser did.interrupt
     // command, nor any extra utterance.
     provider.interrupt(&session, &probe).unwrap();
-    provider.close_session(&session).unwrap();
+    // The private Echo sender is stopped locally, but that is not a D-ID
+    // remote A/V STOP receipt. Keep the provider session quarantined.
+    let remote_stop = provider.close_session(&session).unwrap_err();
+    assert_eq!(remote_stop.kind, ProviderErrorKind::Unavailable);
+    assert!(!remote_stop.retryable);
+    assert!(
+        !provider
+            .echo_sessions
+            .contains(&session.provider_session_id)
+            .unwrap()
+    );
     assert!(provider.interrupt(&session, &probe).is_err());
     assert!(
         provider
@@ -1029,7 +1039,17 @@ fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first()
     provider
         .speak_text(&first, "Серверный ответ.", &probe)
         .unwrap();
-    provider.close_session(&first).unwrap();
+    // Duplicate-ID protection retains the first local sender until its
+    // local STOP succeeds, but D-ID remote A/V termination remains unknown.
+    let remote_stop = provider.close_session(&first).unwrap_err();
+    assert_eq!(remote_stop.kind, ProviderErrorKind::Unavailable);
+    assert!(!remote_stop.retryable);
+    assert!(
+        !provider
+            .echo_sessions
+            .contains(&first.provider_session_id)
+            .unwrap()
+    );
     assert_eq!(
         *backend.calls.lock().unwrap(),
         vec!["open", "speak", "stop"]
@@ -1367,4 +1387,110 @@ fn failed_compensation_of_invalid_offer_is_never_reported_as_clean() {
             .unwrap()
             .starts_with("DELETE /agents/agent-7/streams/stream-orphan ")
     );
+}
+
+#[test]
+fn did_v2_echo_local_stop_does_not_claim_remote_session_stop() {
+    use std::sync::Arc;
+
+    let (endpoint, captured) = serve(vec![("204 No Content", String::new())]);
+    let backend = Arc::new(MockEchoBackend::default());
+    let provider = adapter(endpoint).with_echo_backend(backend.clone());
+    let probe = Probe(AtomicBool::new(false));
+    provider
+        .echo_sessions
+        .open_session(
+            backend.as_ref(),
+            "echo-session-1",
+            "wss://livekit.example.test/room/agent-echo",
+            "server-ONLY-echo-token",
+            &probe,
+        )
+        .unwrap();
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "echo-session-1".to_owned(),
+        provider_session_id: "echo-session-1".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+
+    let error = provider.close_session(&session).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
+    assert_eq!(
+        *backend.calls.lock().unwrap(),
+        vec!["open".to_owned(), "stop".to_owned()]
+    );
+    assert!(!provider.echo_sessions.contains("echo-session-1").unwrap());
+    // Local Echo STOP must not be followed by an invented V2 DELETE request.
+    assert!(captured.try_recv().is_err());
+}
+
+#[test]
+fn ambiguous_v2_create_timeout_is_not_marked_retryable() {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let (tx, captured) = mpsc::channel();
+    thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap();
+        tx.send(read_request(&mut first)).unwrap();
+        let body = expressive_agent_body();
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        first.write_all(headers.as_bytes()).unwrap();
+        first.write_all(body.as_bytes()).unwrap();
+
+        let (mut second, _) = listener.accept().unwrap();
+        tx.send(read_request(&mut second)).unwrap();
+        thread::sleep(Duration::from_millis(300));
+        let late = r#"{"id":"echo-created-after-timeout","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
+        let headers = format!(
+            "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            late.len()
+        );
+        let _ = second.write_all(headers.as_bytes());
+        let _ = second.write_all(late.as_bytes());
+    });
+
+    let provider = DidAgentStreamsAvatar::new(
+        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7")
+            .with_timeout(Duration::from_millis(100)),
+    )
+    .unwrap()
+    .with_echo_backend(Arc::new(MockEchoBackend::default()));
+
+    let error = provider
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Timeout);
+    assert!(!error.retryable);
+    let _ = captured.recv_timeout(Duration::from_secs(3)).unwrap();
+    let _ = captured.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(captured.try_recv().is_err());
+}
+
+#[test]
+fn ambiguous_v2_create_server_failure_is_not_marked_retryable() {
+    use std::sync::Arc;
+
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        ("503 Service Unavailable", "{}".to_owned()),
+    ]);
+    let provider = adapter(endpoint).with_echo_backend(Arc::new(MockEchoBackend::default()));
+    let error = provider
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
+    let _ = captured.recv().unwrap();
+    let _ = captured.recv().unwrap();
+    assert!(captured.try_recv().is_err());
 }

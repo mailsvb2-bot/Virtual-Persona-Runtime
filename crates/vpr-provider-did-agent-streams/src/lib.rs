@@ -519,14 +519,20 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         Self::validate_session(session)?;
         match session.transport {
             RealtimeAvatarTransport::LiveKit { .. } => {
+                // V2 session conversion binds both identifiers to the same
+                // provider-issued session id. Refuse mismatched identities.
+                if session.provider_resource_id != session.provider_session_id {
+                    return Err(policy_denied());
+                }
+
+                // Stop the private Echo audio sender when present, but never
+                // equate local Echo closure with D-ID's remote A/V termination.
                 if let Some(backend) = &self.echo_backend {
                     self.echo_sessions
                         .close_session(backend.as_ref(), &session.provider_session_id)?;
-                    return Ok(());
                 }
-                // D-ID V2 LiveKit does not provide an authenticated remote
-                // video STOP receipt here. Browser disconnect and inactivity
-                // timeout are not provider-side termination evidence.
+                // The repository's release contract has no verified D-ID V2
+                // remote termination operation. Preserve an unconfirmed STOP.
                 Err(unavailable())
             }
             RealtimeAvatarTransport::WebRtc { .. } => {

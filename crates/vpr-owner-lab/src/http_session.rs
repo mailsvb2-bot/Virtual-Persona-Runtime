@@ -96,31 +96,28 @@ fn fence_authority(
         *replay = None;
         (revoker, state.backend_stop.lock().clone())
     };
-    // Canonical revoke is FIRST. Do not take engine.lock() on this path:
-    // the in-flight voice worker may hold it beyond the teardown deadline.
+    // Canonical revoke is FIRST. If the engine is idle, let its normal
+    // cleanup path issue the single provider STOP. Only use the independent
+    // stop-only capability when a stalled worker still owns the engine mutex;
+    // dispatching both paths duplicates STOP against non-idempotent providers.
     revoker
         .revoke_authority()
         .map_err(|code| lab_error_response(&LabError::Runtime(code)))?;
     request_voice_cancel(state);
-    // Independent of engine.lock(): an STT/LLM worker cannot delay the
-    // private LiveKit sender STOP after the authority epoch has been revoked.
-    let mut stopped = backend_stop.is_none_or(|handle| handle.stop().is_ok());
-    // When the engine is idle, also complete the normal remote-provider cleanup
-    // immediately. This preserves the existing /fence user-visible "revoked"
-    // state while keeping the busy-worker path strictly NON-BLOCKING: authority
-    // has already been withdrawn even if the provider is still unwinding.
-    match state.engine.try_lock() {
+    let stopped = match state.engine.try_lock() {
         Ok(mut engine) => {
             engine
                 .revoke()
                 .map_err(|error| lab_error_response(&error))?;
-            stopped = true;
+            true
         }
-        Err(std::sync::TryLockError::WouldBlock) => {}
+        Err(std::sync::TryLockError::WouldBlock) => {
+            backend_stop.is_none_or(|handle| handle.stop().is_ok())
+        }
         Err(std::sync::TryLockError::Poisoned(_)) => {
             return Err(error_response(500, "INTERNAL_ERROR"));
         }
-    }
+    };
     // STOP is not a provider-drain receipt. Never acknowledge a fence while
     // an admitted STT/LLM/TTS request is still in flight.
     Ok(stopped && revoker.await_provider_quiescence(Duration::ZERO))

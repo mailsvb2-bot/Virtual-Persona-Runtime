@@ -12,6 +12,11 @@ export default defineConfig({
     "rt1-voice-inflight-stop.spec.ts",
     "rt1-livekit-provider-lifecycle.spec.ts",
     "rt1-canonical-provider.spec.ts",
+    // This journey owns its authenticated worker/provider fixtures and runs
+    // only under playwright.rt1.voice.config.ts, never the static UI server.
+    "rt1-worker-voice-journey.spec.ts",
+    // This real-worker journey has its own three-service harness and must not run against the static UI server.
+    "rt1-worker-owner-visitor-isolation.spec.ts",
   ],
   timeout: 30_000,
   fullyParallel: false,

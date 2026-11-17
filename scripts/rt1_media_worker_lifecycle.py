@@ -42,11 +42,18 @@ class AllocatedSessionError(RuntimeError):
 
 
 class SenderBackend(Protocol):
-    def allocate(self, operation_id: str, generation: int) -> str:
-        """Create one session; recheck renderer readiness at allocation time.
+    def allocate_bounded(
+        self,
+        operation_id: str,
+        generation: int,
+        timeout: float,
+        cancel_requested: threading.Event,
+    ) -> str:
+        """Create under the caller deadline and observe owner cancellation.
 
-        Publication preflight is a snapshot, not a lease. Implementations must
-        fail closed if the real Persona renderer is no longer ready here.
+        Implementations must enforce timeout in their provider transport, not
+        by spawning a detached waiter. If a provider has already allocated and
+        can return its authoritative late ID, return it for durable STOP.
         """
 
     def persona_video_ready(self) -> bool:
@@ -110,7 +117,12 @@ class MediaLifecycle:
         # The HTTP deadline can expire before SQLite accepts a CANCEL write.
         # Fence that still-running CREATE locally before it can commit active.
         # This is NOT a substitute for the durable tombstone after a crash.
-        self._expired_create_deadlines: set[tuple[str, int]] = set()
+        # Cancellation is delivered to the provider transport itself. No
+        # detached CREATE waiter thread may outlive the HTTP request.
+        self._create_cancellations: dict[tuple[str, int], threading.Event] = {}
+        # Kept separate from the SQLite RLock so shutdown can signal an in-flight
+        # provider call even while a durable writer is blocked.
+        self._create_cancellations_lock = threading.Lock()
         # A hung STOP owns one worker thread until the backend returns.
         # Repeated HTTP DELETEs must not accumulate unbounded STOP threads.
         self._stop_gate = threading.BoundedSemaphore(1)
@@ -125,7 +137,22 @@ class MediaLifecycle:
         except Exception:
             return False
 
-    def publication_readiness(self) -> dict[str, bool]:
+    def persona_identity(self) -> tuple[str, int] | None:
+        """Read the backend's immutable asset binding, not a second registry."""
+        identity = getattr(self._backend, "persona_identity", None)
+        if not callable(identity):
+            return None
+        result = identity()
+        if result is None:
+            return None
+        if (not isinstance(result, tuple) or len(result) != 2
+                or not isinstance(result[0], str)
+                or not result[0] or type(result[1]) is not int
+                or result[1] < 1):
+            raise RuntimeError("invalid worker Persona binding")
+        return result
+
+    def publication_readiness(self) -> dict[str, bool | str | int]:
         """Read-only admission snapshot; never CREATE, CANCEL or claim STOP.
 
         A real Persona video renderer is mandatory for public publication.
@@ -134,8 +161,13 @@ class MediaLifecycle:
         CREATE still rechecks that state under BEGIN IMMEDIATE.
         """
         persona_video_ready = self.persona_video_ready()
+        identity = self.persona_identity()
+        metadata = (
+            {"persona_id": identity[0], "persona_version": identity[1]}
+            if identity is not None else {}
+        )
         if self._closing.is_set():
-            return {"ready": False, "persona_video_ready": persona_video_ready}
+            return {"ready": False, "persona_video_ready": persona_video_ready, **metadata}
         with self._lock:
             if self._closing.is_set():
                 ledger_ready = False
@@ -149,6 +181,7 @@ class MediaLifecycle:
         return {
             "ready": ledger_ready and persona_video_ready,
             "persona_video_ready": persona_video_ready,
+            **metadata,
         }
 
     def publication_ready(self) -> bool:
@@ -180,113 +213,48 @@ class MediaLifecycle:
         )
 
     def create_bounded(self, operation_id: str, generation: int, timeout: float) -> str:
-        """Bound the HTTP CREATE wait without abandoning a late provider result.
+        """Run one CREATE under a deadline enforced by the provider transport.
 
-        The *same* durable create() continues in one daemon thread. On timeout
-        CANCEL is committed before returning, without waiting for a hung
-        provider STOP. A late allocated ID is compensated by create(); if the
-        provider never returns, the durable unknown-ID quarantine stays closed.
-        The periodic canonical reconciler owns STOP if CREATE already finished.
+        No daemon waiter thread is used. The backend receives the remaining
+        deadline and the same cancellation event that owner DELETE/shutdown
+        sets. If a provider returns an allocation ID after cancellation, the
+        durable ledger records and compensates that exact ID before admission.
         """
+        if not 0 < timeout <= 60:
+            raise ValueError("invalid CREATE timeout")
+        return self.create(operation_id, generation, timeout=timeout)
+
+    def create(
+        self, operation_id: str, generation: int, timeout: float = 8.0
+    ) -> str:
+        """Create synchronously through a backend-enforced bounded transport."""
+        if not operation_id or generation < 1:
+            raise ValueError("invalid operation identity")
         if not 0 < timeout <= 60:
             raise ValueError("invalid CREATE timeout")
         if self._closing.is_set():
             raise RuntimeError("RT1 worker shutting down; CREATE denied")
         if not self._create_gate.acquire(blocking=False):
             raise RuntimeError("another provider CREATE remains in flight")
-        outcome = Queue(maxsize=1)
-        completed = threading.Event()
         identity = (operation_id, generation)
-
-        def allocate():
-            try:
-                outcome.put((True, self.create(operation_id, generation)))
-            except Exception as error:
-                outcome.put((False, error))
-            finally:
-                # Synchronize completion with the deadline marker. A late
-                # marker cannot survive a finished worker and leak memory.
-                with self._lock:
-                    completed.set()
-                    self._expired_create_deadlines.discard(identity)
-                self._create_gate.release()
-
+        cancellation = threading.Event()
+        deadline = time.monotonic() + timeout
         try:
-            threading.Thread(
-                target=allocate, name="rt1-bounded-create", daemon=True
-            ).start()
-        except Exception:
+            with self._create_cancellations_lock:
+                self._create_cancellations[identity] = cancellation
+            return self._create(operation_id, generation, deadline, cancellation)
+        finally:
+            with self._create_cancellations_lock:
+                self._create_cancellations.pop(identity, None)
             self._create_gate.release()
-            raise
-        try:
-            succeeded, result = outcome.get(timeout=timeout)
-        except Empty:
-            # A timed-out CREATE must not commit 'active' even when SQLite
-            # cannot persist CANCEL immediately. Mark it under the same lock
-            # as CREATE finalization, then attempt the durable tombstone.
-            with self._lock:
-                if not completed.is_set():
-                    self._expired_create_deadlines.add(identity)
-            try:
-                self.cancel_bounded(operation_id, generation, min(timeout, 0.05))
-            except Exception as error:
-                # Distinguish a failed STOP (durable quarantine exists) from
-                # a failed CANCEL write (no durable crash-recovery guarantee).
-                try:
-                    row = self.status(operation_id)
-                except Exception:
-                    row = None
-                if row is not None and row[0] == generation and row[1] == "active" and row[2]:
-                    # CREATE already committed before the HTTP waiter timed
-                    # out. The local deadline marker cannot retroactively
-                    # revoke it. Compensate the known sender immediately using
-                    # the canonical STOP receipt validator and SQLite ledger.
-                    # Never run provider STOP on the HTTP CREATE thread:
-                    # the backend may hang indefinitely. A single bounded
-                    # background slot owns compensation and the existing
-                    # durable ledger retains the unresolved identity.
-                    if self._stop_gate.acquire(blocking=False):
-                        def compensate():
-                            try:
-                                self._finish_stop(operation_id, row[2], generation)
-                            except Exception:
-                                # Unverified STOP stays retryable in the ledger.
-                                pass
-                            finally:
-                                self._stop_gate.release()
 
-                        try:
-                            threading.Thread(
-                                target=compensate,
-                                name="rt1-create-compensating-stop",
-                                daemon=True,
-                            ).start()
-                        except Exception:
-                            self._stop_gate.release()
-                    raise RuntimeError(
-                        "CREATE deadline exceeded; cancellation persistence unavailable; "
-                        "remote STOP unconfirmed"
-                    ) from error
-                if row is None or row[1] in ("creating", "active"):
-                    raise RuntimeError(
-                        "CREATE deadline exceeded; cancellation persistence unavailable; "
-                        "remote STOP unconfirmed"
-                    ) from error
-                raise RuntimeError(
-                    "CREATE deadline exceeded; remote STOP unconfirmed"
-                ) from error
-            raise RuntimeError("CREATE deadline exceeded; remote STOP unconfirmed") from None
-        if succeeded:
-            if self._closing.is_set():
-                # Shutdown owns durable compensating STOP for the allocated
-                # sender. Never deliver a newly revoked CREATE receipt.
-                raise RuntimeError("RT1 worker shutting down; CREATE denied")
-            return result
-        raise result
-
-    def create(self, operation_id: str, generation: int) -> str:
-        if not operation_id or generation < 1:
-            raise ValueError("invalid operation identity")
+    def _create(
+        self,
+        operation_id: str,
+        generation: int,
+        deadline: float,
+        cancellation: threading.Event,
+    ) -> str:
         # Obtain the backend's *authoritative* preassigned identity before
         # allocation. Recording it only after a timeout misses process death
         # during CREATE, especially when CANCEL already committed. This is
@@ -299,8 +267,8 @@ class MediaLifecycle:
                 raise RuntimeError("backend supplied invalid preassigned sender identity")
             recovery_id = candidate
         with self._lock:
-            if self._closing.is_set():
-                raise RuntimeError("RT1 worker shutting down; CREATE denied")
+            if self._closing.is_set() or cancellation.is_set():
+                raise RuntimeError("RT1 CREATE cancelled before provider dispatch")
             # The Python lock is per process. BEGIN IMMEDIATE also serializes
             # admission across distinct worker processes sharing this ledger.
             # Commit the durable CREATE intent before any provider allocation.
@@ -320,6 +288,11 @@ class MediaLifecycle:
                        LIMIT 1"""
                 ).fetchone():
                     raise RuntimeError("worker has unresolved media allocation")
+                allocate_bounded = getattr(self._backend, "allocate_bounded", None)
+                if not callable(allocate_bounded):
+                    raise RuntimeError(
+                        "backend lacks transport-enforced bounded CREATE; allocation denied"
+                    )
                 self._write(operation_id, generation, "creating", None)
                 if recovery_id is not None:
                     self._db.execute(
@@ -332,10 +305,19 @@ class MediaLifecycle:
                     self._db.execute("ROLLBACK")
                 raise
         try:
-            session_id = self._backend.allocate(operation_id, generation)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or cancellation.is_set():
+                raise TimeoutError("provider CREATE deadline/cancellation reached before dispatch")
+            session_id = allocate_bounded(
+                operation_id, generation, remaining, cancellation
+            )
             if not session_id:
                 raise RuntimeError("backend supplied an empty session identifier")
         except BaseException as create_error:
+            # Capture owner cancellation before our own compensating cancel_bounded()
+            # call sets the same event. Otherwise a normal lost CREATE reply would
+            # be misreported as an owner revoke after compensation starts.
+            owner_cancelled = cancellation.is_set()
             # Some adapters receive the actual provider-generated session ID
             # before a later CREATE validation/transport step fails. Preserve
             # that *authenticated* ID even when the ordinary CREATE reply was
@@ -354,38 +336,39 @@ class MediaLifecycle:
                 self._db.execute("BEGIN IMMEDIATE")
                 try:
                     row = self._get(operation_id)
-                    # A failed CREATE may still have allocated remotely. Do not
-                    # retry it or discard an already committed cancellation.
-                    if row and row[0] == generation and row[1] in ("creating", "stopping", "uncertain") and row[2] is None:
-                        # CANCEL may have committed while CREATE was in flight.
-                        # A lost CREATE reply may still have a known, stable
-                        # sender ID; otherwise retain an unknown-id quarantine.
-                        # Neither outcome is a verified STOP.
+                    if row and row[0] == generation and row[1] in (
+                        "creating", "stopping", "uncertain"
+                    ) and row[2] is None:
+                        # A lost CREATE reply may still have a known sender ID.
+                        # Otherwise retain an unknown-id quarantine, never a receipt.
                         self._write(operation_id, generation, "uncertain", cleanup_id)
                     self._db.execute("COMMIT")
                 except BaseException:
                     if self._db.in_transaction:
                         self._db.execute("ROLLBACK")
                     raise
-            # A provider can allocate successfully and lose its CREATE reply.
-            # When the backend supplies an authoritative preassigned identity
-            # OR a verified late allocation ID, compensate NOW instead of
-            # waiting for a worker restart or the
-            # periodic reconciler. Keep the original CREATE error: even a
-            # verified STOP must never turn a failed allocation into admission.
-            # An unsuccessful STOP remains durable and retryable as 'uncertain'.
+            # Compensation uses the existing bounded STOP owner. A stalled
+            # provider STOP cannot hold the CREATE HTTP request open.
             if cleanup_id is not None:
                 try:
-                    self._finish_stop(operation_id, cleanup_id, generation)
+                    self.cancel_bounded(
+                        operation_id, generation,
+                        min(max(deadline - time.monotonic(), 0.05), 1.0),
+                    )
                 except Exception:
-                    # The durable uncertain row remains the retry handle.
                     pass
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    "CREATE deadline exceeded; remote STOP unconfirmed"
+                ) from create_error
+            if owner_cancelled:
+                raise RuntimeError(
+                    "provider CREATE cancelled; remote STOP may remain unconfirmed"
+                ) from create_error
             raise
         if recovery_id is not None and session_id != recovery_id:
-            # The backend violated its authoritative identity contract. The
-            # returned sender may already be transmitting: persist its ACTUAL
-            # ID before attempting compensation, including across restart.
-            # Retain the original preassigned ID as a second possible target.
+            # Persist the actual ID and retain the preassigned identity as a
+            # second possible target; both must be stopped before quarantine clears.
             with self._lock:
                 self._db.execute("BEGIN IMMEDIATE")
                 try:
@@ -400,21 +383,23 @@ class MediaLifecycle:
                     if self._db.in_transaction:
                         self._db.execute("ROLLBACK")
                     raise
-            # Best-effort immediate STOP for the newly discovered sender.
-            # Even a valid receipt cannot prove the preassigned ID was inert;
-            # _finish_stop deliberately retains the identity quarantine.
             try:
-                self._finish_stop(operation_id, session_id, generation)
+                receipt = self.cancel_bounded(
+                    operation_id, generation,
+                    min(max(deadline - time.monotonic(), 0.05), 1.0),
+                )
+                if receipt is None:
+                    raise RuntimeError("compensating STOP remains pending")
             except Exception as error:
                 raise RuntimeError(
                     "backend CREATE identity mismatch; compensating STOP unconfirmed"
                 ) from error
-            raise RuntimeError("backend CREATE identity mismatch; both possible sender STOPs confirmed")
+            raise RuntimeError(
+                "backend CREATE identity mismatch; both possible sender STOPs confirmed"
+            )
         with self._lock:
-            # CREATE completion and CANCEL must have one SQLite linearization
-            # point across *processes*. The Python RLock alone is insufficient:
-            # without this transaction, a stale 'creating' read can overwrite
-            # a committed CANCEL with 'active' and expose revoked media.
+            # CREATE completion and CANCEL have one SQLite linearization point
+            # across processes; a stale read can never overwrite a tombstone.
             self._db.execute("BEGIN IMMEDIATE")
             try:
                 row = self._get(operation_id)
@@ -422,21 +407,29 @@ class MediaLifecycle:
                     row
                     and row[0] == generation
                     and row[1] == "creating"
-                    and (operation_id, generation) not in self._expired_create_deadlines
+                    and not cancellation.is_set()
+                    and time.monotonic() < deadline
                     and not self._closing.is_set()
                 ):
                     self._write(operation_id, generation, "active", session_id)
                     self._db.execute("COMMIT")
                     return session_id
-                # Cancellation won while the backend was starting. Persist the
-                # returned session address for compensating STOP, never admit it.
                 self._write(operation_id, generation, "stopping", session_id)
                 self._db.execute("COMMIT")
             except BaseException:
                 if self._db.in_transaction:
                     self._db.execute("ROLLBACK")
                 raise
-        self._finish_stop(operation_id, session_id, generation)
+        try:
+            self.cancel_bounded(
+                operation_id, generation,
+                min(max(deadline - time.monotonic(), 0.05), 1.0),
+            )
+        except Exception:
+            # STOP remains durable and retryable; never claim a receipt here.
+            pass
+        if time.monotonic() >= deadline:
+            raise RuntimeError("CREATE deadline exceeded; remote STOP unconfirmed")
         raise RuntimeError("operation revoked during allocation")
 
     def cancel_bounded(
@@ -494,6 +487,12 @@ class MediaLifecycle:
     ) -> StopReceipt | None:
         if not operation_id or generation < 1:
             raise ValueError("invalid operation identity")
+        # Signal before waiting for the SQLite RLock/transaction. This must
+        # remain prompt even when another in-process writer is stalled.
+        with self._create_cancellations_lock:
+            pending_create = self._create_cancellations.get((operation_id, generation))
+            if pending_create is not None:
+                pending_create.set()
         with self._lock:
             # A CANCEL can arrive before CREATE, including from another worker
             # process. Reserve a durable tombstone atomically so that a late
@@ -615,6 +614,13 @@ class MediaLifecycle:
                         (operation_id,),
                     ).fetchone()[0]
                     if verified == 1:
+                        # Durable STOP is already recorded. A prior process
+                        # may have committed just before in-memory cleanup.
+                        acknowledge = getattr(
+                            self._backend, "acknowledge_durable_stop", None
+                        )
+                        if callable(acknowledge):
+                            acknowledge(operation_id, session_id, generation)
                         return StopReceipt(operation_id, session_id, generation, True, True)
                     # A pre-migration stopped row is not a STOP receipt.
                     self._write(operation_id, generation, "uncertain", session_id)
@@ -694,11 +700,22 @@ class MediaLifecycle:
                     if self._db.in_transaction:
                         self._db.execute("ROLLBACK")
                     raise
+            # Only now can the sender evict its in-process idempotent
+            # receipt(s): the canonical SQLite ledger is durably authoritative.
+            # Keep both targets distinct for mismatched preassigned CREATE.
+            acknowledge = getattr(self._backend, "acknowledge_durable_stop", None)
+            if callable(acknowledge):
+                acknowledge(operation_id, session_id, generation)
+                if mismatch:
+                    acknowledge(operation_id, preassigned, generation)
             return receipt
 
     def request_shutdown(self) -> None:
-        """Immediately fence new CREATE before slow SQLite or network work."""
+        """Immediately fence new CREATE and signal every live provider transport."""
         self._closing.set()
+        with self._create_cancellations_lock:
+            for cancellation in self._create_cancellations.values():
+                cancellation.set()
 
     def begin_shutdown(self, deadline: float | None = None) -> bool:
         """Fence CREATE immediately, then durably quarantine through one deadline.
@@ -816,11 +833,28 @@ class MediaLifecycle:
         """
         if self._closing.is_set():
             self.quarantine_after_restart()
+        first_failure = None
+        # GPU inference may fail AFTER the worker has acknowledged PCM.
+        # Discover such live senders through the existing provider, then
+        # persist their CANCEL in this same SQLite owner before physical STOP.
+        # No second session registry or remote STOP authority is created.
+        observe_failed = getattr(self._backend, "failed_renderer_sessions", None)
+        if callable(observe_failed) and not self._closing.is_set():
+            try:
+                failed_sessions = observe_failed()
+            except Exception as error:
+                failed_sessions = ()
+                first_failure = error
+            for operation_id, generation in failed_sessions:
+                try:
+                    self.cancel(operation_id, generation, wait_for_stop=False)
+                except Exception as error:
+                    if first_failure is None:
+                        first_failure = error
         with self._lock:
             pending = self._db.execute(
                 "SELECT id,generation,session_id FROM media_operations WHERE phase IN ('stopping','uncertain')"
             ).fetchall()
-        first_failure = None
         for operation_id, generation, session_id in pending:
             if not session_id:
                 continue
@@ -833,6 +867,24 @@ class MediaLifecycle:
             # Preserve the established provider error contract for callers
             # and recovery tests, after attempting every known STOP target.
             raise first_failure
+
+    def unresolved_operations(self) -> tuple[tuple[str, int, str], ...]:
+        """Return operation identities that still require verified remote STOP.
+
+        This reads the existing durable ledger. It is not a second registry and
+        deliberately omits provider session tokens or sender credentials.
+        """
+        with self._lock:
+            rows = self._db.execute(
+                """SELECT id, generation, phase FROM media_operations
+                   WHERE phase != 'stopped'
+                      OR (session_id IS NOT NULL AND stop_verified=0)
+                   ORDER BY id"""
+            ).fetchall()
+        return tuple(
+            (operation_id, generation, phase)
+            for operation_id, generation, phase in rows
+        )
 
     def status(self, operation_id: str):
         with self._lock:

@@ -1,8 +1,8 @@
 //! The existing RT1 durable worker as a canonical `RealtimeAvatarPort`.
 //! It owns no publication authority: the caller pre-registers this operation
 //! under the existing RT1 owner/visitor revocation and STOP coordinator.
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -24,12 +24,17 @@ fn denied() -> ProviderError {
 
 /// A single worker-backed avatar session driven by the existing canonical
 /// `OwnerLabEngine`. CREATE is non-retryable; only the worker ledger owns STOP.
+type CreatedSessionObserver = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+type RemoteStopObserver = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+
 pub struct OperationWorkerAvatar {
     client: RemoteOperationClient,
     operation_id: String,
     generation: u64,
     create_attempted: AtomicBool,
     created_session: Mutex<Option<String>>,
+    created_session_observer: Option<CreatedSessionObserver>,
+    remote_stop_observer: Option<RemoteStopObserver>,
 }
 
 impl OperationWorkerAvatar {
@@ -39,6 +44,38 @@ impl OperationWorkerAvatar {
         client: RemoteOperationClient,
         operation_id: String,
         generation: u64,
+    ) -> Result<Self, ProviderError> {
+        Self::build(client, operation_id, generation, None, None)
+    }
+
+    /// Bind the adapter to the visitor's already registered canonical remote
+    /// lifecycle owner. The observer records every late CREATE id before SDP
+    /// offer publication; the STOP callback delegates to that same owner.
+    ///
+    /// # Errors
+    /// Rejects malformed operation identity before any provider I/O.
+    pub fn with_remote_owner(
+        client: RemoteOperationClient,
+        operation_id: String,
+        generation: u64,
+        created_session: impl Fn(&str) -> Result<(), String> + Send + Sync + 'static,
+        remote_stop: impl Fn() -> Result<(), String> + Send + Sync + 'static,
+    ) -> Result<Self, ProviderError> {
+        Self::build(
+            client,
+            operation_id,
+            generation,
+            Some(Arc::new(created_session)),
+            Some(Arc::new(remote_stop)),
+        )
+    }
+
+    fn build(
+        client: RemoteOperationClient,
+        operation_id: String,
+        generation: u64,
+        created_session_observer: Option<CreatedSessionObserver>,
+        remote_stop_observer: Option<RemoteStopObserver>,
     ) -> Result<Self, ProviderError> {
         if generation == 0
             || operation_id.is_empty()
@@ -55,6 +92,8 @@ impl OperationWorkerAvatar {
             generation,
             create_attempted: AtomicBool::new(false),
             created_session: Mutex::new(None),
+            created_session_observer,
+            remote_stop_observer,
         })
     }
 
@@ -140,8 +179,18 @@ impl RealtimeAvatarPort for OperationWorkerAvatar {
         if cancellation.is_cancelled() || self.create_attempted.swap(true, Ordering::AcqRel) {
             return Err(denied());
         }
-        // CREATE is never retried after an ambiguous remote outcome.
-        let id = self.client.create(&self.operation_id, self.generation)?;
+        // CREATE is never retried after an ambiguous remote outcome. If
+        // cancellation races the durable PUT, return its late id to the same
+        // registered owner before any SDP offer can be fetched or published.
+        let id =
+            self.client
+                .create_cancellable(&self.operation_id, self.generation, cancellation)?;
+        if let Some(observer) = &self.created_session_observer {
+            observer(&id).map_err(|_| denied())?;
+        }
+        if cancellation.is_cancelled() {
+            return Err(denied());
+        }
         let offer = self.client.offer(&self.operation_id, &id)?;
         if cancellation.is_cancelled() {
             return Err(denied()); // registered owner STOP/reconciler owns cleanup
@@ -223,11 +272,19 @@ impl RealtimeAvatarPort for OperationWorkerAvatar {
         let audio = Self::normalize_pcm(pcm, sample_rate_hz, channels)?;
         // Match worker 2-second queue: send half-second chunks with bounded
         // pacing and recheck the SAME revocable canonical turn on every write.
-        for chunk in audio.chunks(16_000) {
+        let mut fragments = audio.chunks(16_000).peekable();
+        while let Some(chunk) = fragments.next() {
             if cancellation.is_cancelled() {
                 return Err(denied());
             }
-            self.client.push_pcm(&self.operation_id, chunk)?;
+            if fragments.peek().is_none() {
+                // This is the actual end of this canonical TTS utterance;
+                // flush the renderer's remaining 20-380 ms PCM as part of
+                // the SAME authenticated worker/media operation.
+                self.client.push_pcm_final(&self.operation_id, chunk)?;
+            } else {
+                self.client.push_pcm(&self.operation_id, chunk)?;
+            }
             if cancellation.is_cancelled() {
                 return Err(denied());
             }
@@ -247,13 +304,19 @@ impl RealtimeAvatarPort for OperationWorkerAvatar {
 
     fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
         self.validate_session(session)?;
-        let confirmed_id = self
-            .client
-            .cancel_confirmed(&self.operation_id, self.generation)?;
-        if confirmed_id != session.provider_session_id {
-            return Err(denied());
+        if let Some(stop) = &self.remote_stop_observer {
+            // RT1 uses one canonical Rt1RemoteMediaRevocation owner. Do not
+            // race an independent adapter DELETE against the owner reconciler.
+            stop().map_err(|_| denied())
+        } else {
+            let confirmed_id = self
+                .client
+                .cancel_confirmed(&self.operation_id, self.generation)?;
+            if confirmed_id != session.provider_session_id {
+                return Err(denied());
+            }
+            Ok(())
         }
-        Ok(())
     }
 }
 
@@ -263,6 +326,7 @@ mod tests {
     use crate::operation_client::RemoteOperationClient;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::sync::Arc;
     use std::thread;
     use std::time::{Duration, Instant};
     use vpr_integration::{CancellationProbe, RealtimeAvatarPort};
@@ -371,6 +435,52 @@ mod tests {
             vec!["GET /v1/avatar/readiness HTTP/1.1"],
             "renderer denial must prevent the follow-up media CREATE",
         );
+    }
+
+    #[test]
+    fn close_session_delegates_to_the_registered_remote_stop_owner() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use vpr_integration::{
+            RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcSessionDescription,
+        };
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let stop_calls = Arc::clone(&calls);
+        let client = RemoteOperationClient::new(
+            "http://127.0.0.1:1",
+            "worker-secret",
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        let avatar = OperationWorkerAvatar::with_remote_owner(
+            client,
+            "operation-1".to_owned(),
+            1,
+            |session_id| {
+                assert_eq!(session_id, "media-1");
+                Ok(())
+            },
+            move || {
+                stop_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .unwrap();
+        *avatar.created_session.lock().unwrap() = Some("media-1".to_owned());
+        let session = RealtimeAvatarSession {
+            provider_resource_id: "operation-1".to_owned(),
+            provider_session_id: "media-1".to_owned(),
+            transport: RealtimeAvatarTransport::WebRtc {
+                offer: WebRtcSessionDescription {
+                    kind: "offer".to_owned(),
+                    sdp: "offer-sdp".to_owned(),
+                },
+                ice_servers: Vec::new(),
+            },
+        };
+
+        avatar.close_session(&session).unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

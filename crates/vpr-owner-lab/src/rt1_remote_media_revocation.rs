@@ -17,6 +17,8 @@ pub struct Rt1RemoteMediaRevocation {
     revoked: AtomicBool,
     confirmed: AtomicBool,
     stop_gate: Mutex<()>,
+    /// Short identity-only fence. Never held across worker network I/O.
+    identity_gate: Mutex<()>,
     revoke_notifier: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     /// CREATE can return after owner revoke/STOP. Correlate both outcomes to
     /// the exact remote sender, not just the operation/generation envelope.
@@ -51,6 +53,7 @@ impl Rt1RemoteMediaRevocation {
             revoked: AtomicBool::new(false),
             confirmed: AtomicBool::new(false),
             stop_gate: Mutex::new(()),
+            identity_gate: Mutex::new(()),
             revoke_notifier: Mutex::new(None),
             created_session_id: Mutex::new(None),
             confirmed_session_id: Mutex::new(None),
@@ -88,7 +91,9 @@ impl Rt1RemoteMediaRevocation {
 
     /// Bind a late CREATE reply to the operation before publishing its SDP.
     /// A STOP receipt for a different sender cannot authorize that CREATE.
-    /// The STOP gate serializes this binding against remote cancellation.
+    /// A short identity gate serializes this binding against the final STOP
+    /// receipt. A revoked late CREATE only wakes the existing reconciler;
+    /// this callback never performs network I/O while the engine is locked.
     ///
     /// # Errors
     /// Refuses conflicting identities, including STOP-before-CREATE races.
@@ -96,34 +101,42 @@ impl Rt1RemoteMediaRevocation {
         if session_id.trim().is_empty() {
             return Err("RT1_REMOTE_SESSION_ID_INVALID".into());
         }
-        let _serial = self.stop_gate.lock();
-        if self.identity_conflict.load(Ordering::Acquire) {
-            return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
-        }
-        let mut created = self.created_session_id.lock();
-        if created
-            .as_deref()
-            .is_some_and(|previous| previous != session_id)
-            || self
-                .confirmed_session_id
-                .lock()
+        let revoked = {
+            // This short local lock races safely with the receipt commit but
+            // never waits behind the STOP network request's serialization gate.
+            let _identity = self.identity_gate.lock();
+            if self.identity_conflict.load(Ordering::Acquire) {
+                return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
+            }
+            let mut created = self.created_session_id.lock();
+            if created
                 .as_deref()
-                .is_some_and(|confirmed| confirmed != session_id)
-        {
-            self.identity_conflict.store(true, Ordering::Release);
-            self.revoked.store(true, Ordering::Release);
-            self.confirmed.store(false, Ordering::Release);
-            return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
-        }
-        *created = Some(session_id.to_owned());
-        // CREATE may finish after owner revoke. Returning Ok here would allow
-        // the caller to publish media on an already revoked operation.
-        // A STOP that was previously uncertain must be compensated as soon
-        // as the actual remote session identity becomes known.
-        drop(created);
-        if self.revoked.load(Ordering::Acquire) {
+                .is_some_and(|previous| previous != session_id)
+                || self
+                    .confirmed_session_id
+                    .lock()
+                    .as_deref()
+                    .is_some_and(|confirmed| confirmed != session_id)
+            {
+                self.identity_conflict.store(true, Ordering::Release);
+                self.revoked.store(true, Ordering::Release);
+                self.confirmed.store(false, Ordering::Release);
+                return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
+            }
+            *created = Some(session_id.to_owned());
+            self.revoked.load(Ordering::Acquire)
+        };
+        if revoked {
+            // CREATE may finish while the engine mutex is held. Bind the late
+            // id, then wake the already-running reconciler; never perform
+            // network STOP from the provider adapter callback itself.
             if !self.confirmed.load(Ordering::Acquire) {
-                self.cancel_locked()?;
+                let notify = self.revoke_notifier.lock().clone();
+                if let Some(notify) = notify {
+                    notify();
+                } else {
+                    return Err("RT1_REMOTE_STOP_RECONCILER_UNAVAILABLE".into());
+                }
             }
             return Err("RT1_VISITOR_REVOKED".into());
         }
@@ -178,6 +191,13 @@ impl Rt1RemoteMediaRevocation {
             .worker
             .cancel_confirmed(&self.operation_id, self.generation)
             .map_err(|_| "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".to_owned())?;
+        let _identity = self.identity_gate.lock();
+        // A conflicting late CREATE may arrive while the worker STOP request
+        // is in flight. Recheck under the identity fence before committing
+        // the receipt; an earlier check cannot authorize a stale sender.
+        if self.identity_conflict.load(Ordering::Acquire) {
+            return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
+        }
         if self
             .created_session_id
             .lock()

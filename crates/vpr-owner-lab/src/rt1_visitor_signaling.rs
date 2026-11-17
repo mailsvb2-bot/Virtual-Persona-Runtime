@@ -26,7 +26,15 @@ impl Rt1VisitorConversation {
                 },
             ))
         };
-        // Even a provider error cannot bypass revoke and retain stale success.
+        // Preserve a remote STOP/answer uncertainty instead of masking it
+        // with the concurrent local authority-revoked result. The caller must
+        // see that remote audio/video shutdown is still unconfirmed.
+        if let Err(error) = result.as_ref() {
+            if error.starts_with("RT1_REMOTE_") {
+                return Err(error.clone());
+            }
+        }
+        // A provider success cannot bypass revoke and retain stale signaling.
         self.manager.authorize(&self.id)?;
         if self.interrupt.cancelled.load(Ordering::Acquire) {
             return Err("RT1_VISITOR_REVOKED".into());

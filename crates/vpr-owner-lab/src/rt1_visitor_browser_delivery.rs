@@ -1,5 +1,6 @@
 //! Final local RT1 HTTP buffered response lease. No second runtime or sender.
 use super::{Ordering, Rt1VisitorConversation};
+use vpr_runtime::{SessionRevocationHandle, TcpResponseRegistration, TcpWriteRevocation};
 
 /// Keeps the canonical visitor provider-egress lease alive through the HTTP
 /// response write. Dropping it signals LOCAL delivery quiescence only.
@@ -41,5 +42,53 @@ impl Rt1VisitorConversation {
             return Err("RT1_VISITOR_REVOKED".into());
         }
         Ok(Rt1BrowserDeliveryPermit { _lease: lease })
+    }
+}
+
+/// Holds the visitor publication permit and the real browser TCP registration
+/// until the outer HTTP proxy finishes writing the response.
+pub struct Rt1BrowserDeliveryGuard {
+    _permit: Rt1BrowserDeliveryPermit,
+    _registration: TcpResponseRegistration,
+}
+
+impl Rt1VisitorConversation {
+    /// Register the actual client socket against this visitor's canonical
+    /// runtime session. Owner revoke shuts the socket through the same
+    /// execution gate used by provider egress.
+    ///
+    /// # Errors
+    /// Rejects a missing runtime session or revoked publication. A rejected
+    /// writer is always aborted locally.
+    pub fn begin_browser_tcp_delivery(
+        &self,
+        writer: TcpWriteRevocation,
+    ) -> Result<Rt1BrowserDeliveryGuard, String> {
+        let abort = writer.clone();
+        let permit = match self.begin_browser_delivery() {
+            Ok(permit) => permit,
+            Err(error) => {
+                abort.revoke();
+                return Err(error);
+            }
+        };
+        let session: Option<SessionRevocationHandle> = self.interrupt.session.lock().clone();
+        let Some(session) = session else {
+            abort.revoke();
+            return Err("RT1_VISITOR_RUNTIME_SESSION_UNAVAILABLE".into());
+        };
+        let registration = session.register_tcp_response_writer(writer).map_err(|_| {
+            abort.revoke();
+            "RT1_VISITOR_DELIVERY_DENIED".to_owned()
+        })?;
+        if !self.is_active() {
+            abort.revoke();
+            drop(registration);
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
+        Ok(Rt1BrowserDeliveryGuard {
+            _permit: permit,
+            _registration: registration,
+        })
     }
 }

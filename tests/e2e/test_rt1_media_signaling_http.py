@@ -24,6 +24,11 @@ class Sender:
         self.active = True
         return "session-1"
 
+    def allocate_bounded(self, operation_id, generation, timeout, cancel_requested):
+        if cancel_requested.is_set():
+            raise RuntimeError("CREATE cancelled")
+        return self.allocate(operation_id, generation)
+
     def offer(self, operation_id, session_id, generation):
         if not self.active:
             raise RuntimeError("sender closed")

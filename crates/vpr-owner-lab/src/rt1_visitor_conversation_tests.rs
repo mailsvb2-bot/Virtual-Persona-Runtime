@@ -62,11 +62,11 @@ mod rt1_voice_egress_tests {
 }
 
 #[test]
-fn staged_streaming_cannot_call_provider_or_enqueue_without_stop_capability() {
+fn text_and_streaming_voice_remain_denied_without_verified_worker_stop() {
     use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
 
-    // The configured adapter is real, but this negative test must never
-    // contact it: no independent STOP handle has been established.
+    // This configured adapter is deliberately unreachable. Both public
+    // visitor egress paths must deny before any STT/LLM/provider request.
     let provider = LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(
         "http://127.0.0.1:1",
         "test-only",
@@ -84,18 +84,18 @@ fn staged_streaming_cannot_call_provider_or_enqueue_without_stop_capability() {
         remote: None,
         verified_worker_voice: false,
     };
-    // A session without an authenticated worker STOP receipt must not be
-    // reported as remotely closed, even if its local media is absent.
     assert!(!conversation.remote_media_stop_confirmed());
     assert!(!conversation.supports_private_voice());
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    assert_eq!(
+        conversation.text_turn("must not reach LLM").unwrap_err(),
+        "RT1_VISITOR_TEXT_EGRESS_NOT_AUTHORIZED"
+    );
     assert_eq!(
         conversation
-            .voice_turn_streaming_staged(vec![0_u8; 320], &sender)
+            .voice_turn_streaming(vec![0_u8; 320])
             .unwrap_err(),
         "RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED"
     );
-    assert!(receiver.try_recv().is_err());
 }
 
 #[test]
@@ -245,4 +245,58 @@ fn busy_engine_stop_releases_lease_and_does_not_fake_remote_confirmation() {
     );
     assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
     assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+}
+
+#[test]
+fn dropping_visitor_wakes_remote_stop_reconciler_without_blocking_on_worker_http() {
+    use std::net::TcpListener;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::{Duration, Instant};
+    use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
+    use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let client =
+        RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(5)).unwrap();
+    let remote =
+        Arc::new(Rt1RemoteMediaRevocation::new(client, "drop-nonblocking".into(), 1).unwrap());
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let observed_wakes = Arc::clone(&wakes);
+    remote.install_revoke_notifier(move || {
+        observed_wakes.fetch_add(1, Ordering::SeqCst);
+    });
+    let observed_remote = Arc::clone(&remote);
+
+    let provider = LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(
+        "http://127.0.0.1:1",
+        "test-only",
+    ))
+    .unwrap();
+    let engine = OwnerLabEngine::new(Box::new(provider), true).unwrap();
+    let conversation = Rt1VisitorConversation {
+        manager: Arc::new(VisitorSessionManager::new(Arc::new(
+            crate::rt1_workspace_service::Rt1WorkspaceService::new(),
+        ))),
+        id: "unregistered-drop-test".into(),
+        engine: Mutex::new(engine),
+        interrupt: Arc::new(LiveVisitorInterrupt::default()),
+        remote: Some(remote),
+        verified_worker_voice: true,
+    };
+
+    let started = Instant::now();
+    drop(conversation);
+    assert!(
+        started.elapsed() < Duration::from_millis(250),
+        "Drop must not wait for the remote worker HTTP STOP request"
+    );
+    assert!(observed_remote.is_revoked());
+    assert_eq!(wakes.load(Ordering::SeqCst), 1);
+    assert!(!observed_remote.is_stop_confirmed());
+    assert!(matches!(
+        listener.accept(),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
 }

@@ -1,5 +1,11 @@
-use std::sync::{Arc, Condvar, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::collections::HashMap;
+use std::sync::{
+    Arc, Condvar, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::Duration;
+
+use crate::cancellable_tcp_writer::TcpWriteRevocation;
 use vpr_integration::CancellationProbe;
 
 use crate::cancellation::ProviderCancellation;
@@ -10,6 +16,44 @@ use crate::cancellation::ProviderCancellation;
 pub(crate) struct SessionExecutionGate {
     inner: Arc<RwLock<()>>,
     pending: Arc<PendingProviderEgress>,
+    tcp_responses: Arc<PendingTcpResponses>,
+}
+
+#[derive(Debug)]
+struct PendingTcpResponses {
+    next_id: AtomicU64,
+    writers: Mutex<HashMap<u64, TcpWriteRevocation>>,
+}
+
+impl Default for PendingTcpResponses {
+    fn default() -> Self {
+        Self {
+            next_id: AtomicU64::new(1),
+            writers: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+/// Registration for one real HTTP response socket. Dropping it unregisters
+/// the completed response; authority revoke shuts down every still-registered
+/// socket through the same session execution gate as provider egress.
+#[derive(Debug)]
+pub struct TcpResponseRegistration {
+    pending: Arc<PendingTcpResponses>,
+    id: u64,
+}
+
+impl Drop for TcpResponseRegistration {
+    fn drop(&mut self) {
+        match self.pending.writers.lock() {
+            Ok(mut writers) => {
+                writers.remove(&self.id);
+            }
+            Err(poisoned) => {
+                poisoned.into_inner().remove(&self.id);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -65,6 +109,54 @@ impl SessionExecutionGate {
         Ok(ProviderEgressGuard {
             pending: Arc::clone(&self.pending),
         })
+    }
+
+    /// Register an actual client TCP response socket while holding the same
+    /// admission read lock used by provider dispatch. The caller must first
+    /// verify the session authority; a concurrent revoke cannot miss this
+    /// registration because it needs the matching write lock.
+    pub(crate) fn register_tcp_response_writer_locked(
+        &self,
+        writer: TcpWriteRevocation,
+    ) -> Result<TcpResponseRegistration, ()> {
+        let Ok(id) =
+            self.tcp_responses
+                .next_id
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |next| {
+                    next.checked_add(1)
+                })
+        else {
+            writer.revoke();
+            return Err(());
+        };
+        let Ok(mut writers) = self.tcp_responses.writers.lock() else {
+            writer.revoke();
+            return Err(());
+        };
+        writers.insert(id, writer);
+        Ok(TcpResponseRegistration {
+            pending: Arc::clone(&self.tcp_responses),
+            id,
+        })
+    }
+
+    /// Must be called while the session execution write lock is held, after
+    /// authority/policy mutation. Socket shutdown is local and bounded; it is
+    /// not a remote audio/video sender STOP receipt.
+    pub(crate) fn revoke_tcp_response_writers_locked(&self) -> Result<(), ()> {
+        let (mut registered, poisoned) = match self.tcp_responses.writers.lock() {
+            Ok(registered) => (registered, false),
+            Err(poisoned) => (poisoned.into_inner(), true),
+        };
+        let writers = registered
+            .drain()
+            .map(|(_, writer)| writer)
+            .collect::<Vec<_>>();
+        drop(registered);
+        for writer in writers {
+            writer.revoke();
+        }
+        if poisoned { Err(()) } else { Ok(()) }
     }
 
     /// A local transport drain receipt, not a remote RTP STOP receipt.

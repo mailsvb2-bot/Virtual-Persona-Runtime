@@ -1,6 +1,55 @@
 //! RT1 visitor admission, operation identity, failure prioritization and PCM validation.
+use super::{Arc, LabSignalBundle, LiveVisitorInterrupt, OwnerLabEngine};
 use crate::rt1_remote_media_revocation::Rt1RemoteMediaRevocation;
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
+use crate::state::OwnerLabStartRequest;
+
+/// Admit visitor CREATE/offer through the same publication-scoped provider
+/// egress lease used by text and streaming voice. The lease remains live
+/// until the canonical interruptible runtime startup returns.
+pub(super) fn start_engine_with_provider_egress(
+    manager: &VisitorSessionManager,
+    session_id: &str,
+    engine: &mut OwnerLabEngine,
+    consent: bool,
+    interrupt: &Arc<LiveVisitorInterrupt>,
+) -> Result<LabSignalBundle, String> {
+    let _egress = manager.begin_provider_egress(session_id)?;
+    let startup_interrupt = Arc::clone(interrupt);
+    let started =
+        engine.start_visitor_with_interrupt(OwnerLabStartRequest { consent }, move |handle| {
+            *startup_interrupt.turn.lock() = Some(handle.clone());
+            if startup_interrupt
+                .cancelled
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                let _ = handle.interrupt();
+            }
+        });
+    *interrupt.turn.lock() = None;
+    started.map_err(|error| error.code().to_owned())
+}
+
+/// Compensate a failed CREATE without claiming a local close is a remote receipt.
+pub(super) fn cleanup_failed_start(
+    manager: &VisitorSessionManager,
+    session_id: &str,
+    engine: &mut OwnerLabEngine,
+    remote: Option<&Rt1RemoteMediaRevocation>,
+    original_error: String,
+) -> String {
+    let cleanup = engine
+        .visitor_avatar_stop_handle()
+        .map(|_| engine.stop_visitor_provider_confirmed());
+    let _ = manager.close(session_id);
+    if remote.is_some_and(|worker| worker.revoke_confirmed().is_err()) {
+        return "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into();
+    }
+    if matches!(cleanup, Some(Err(_))) {
+        return "RT1_PROVIDER_START_FAILED_STOP_UNCONFIRMED".into();
+    }
+    original_error
+}
 
 /// Generate the existing per-operation cancellation identity before admission.
 pub(super) fn diagnostic_operation_id() -> Result<String, String> {

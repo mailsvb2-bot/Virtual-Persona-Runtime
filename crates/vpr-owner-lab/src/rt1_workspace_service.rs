@@ -62,6 +62,20 @@ impl Rt1WorkspaceService {
         Ok((owner_id, owner_token))
     }
 
+    /// Read the current Persona identity from the sole reviewed-owner store.
+    /// No shadow registry or browser-supplied identity is trusted.
+    ///
+    /// # Errors
+    /// Refuses missing, invalid, or unavailable reviewed Persona storage.
+    pub fn current_persona_identity(&self) -> Result<(String, u64), String> {
+        let _transaction = self.transaction.lock();
+        let record = required_persona()?;
+        if record.snapshot.persona_id.trim().is_empty() || record.snapshot.persona_version == 0 {
+            return Err("invalid canonical Persona identity".into());
+        }
+        Ok((record.snapshot.persona_id, record.snapshot.persona_version))
+    }
+
     /// Server-side owner identification by a secret that has never been stored
     /// in plaintext. The old anonymous Owner Lab CSRF token is not an account.
     ///

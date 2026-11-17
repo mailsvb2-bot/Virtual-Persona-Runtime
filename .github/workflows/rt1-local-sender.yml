@@ -4,8 +4,23 @@ on:
   pull_request:
     paths:
       - 'scripts/rt1_aiortc_backend.py'
+      - 'scripts/rt1_musetalk_renderer.py'
+      - 'scripts/rt1_musetalk_offline_preflight.py'
+      - 'scripts/rt1_musetalk_environment.py'
+      - 'scripts/rt1_musetalk_hardware_acceptance.sh'
       - 'scripts/rt1_media_worker_*.py'
       - 'tests/e2e/test_rt1_*.py'
+      # RT1 conversation/egress changes must re-run the actual worker lifecycle,
+      # cancellation, durable STOP reconciliation and dual-track RTP probe.
+      - 'crates/vpr-owner-lab/src/rt1_*.rs'
+      - 'crates/vpr-owner-lab/src/http_rt1*.rs'
+      # The public RT1 socket and the internal Owner Lab listener are one
+      # revocable transport boundary; changes here must rerun sender STOP.
+      - 'crates/vpr-owner-lab/src/http_proxy.rs'
+      - 'crates/vpr-owner-lab/src/startup.rs'
+      - 'crates/vpr-owner-lab/src/main.rs'
+      - 'crates/vpr-runtime/src/cancellable_tcp_writer.rs'
+      - 'crates/vpr-provider-local-open-source/src/operation_client.rs'
       - '.github/workflows/rt1-local-sender.yml'
   workflow_dispatch:
 
@@ -24,17 +39,36 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install actual WebRTC transport
-        run: python -m pip install 'aiortc>=1.10,<2'
+        run: python -m pip install 'aiortc>=1.10,<2' 'numpy>=1.26,<3'
+      - name: Hardware acceptance runner is syntactically valid and fails closed without GPU setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/rt1_musetalk_hardware_acceptance.sh
+          set +e
+          env -u RT1_VIDEO_RENDERER bash scripts/rt1_musetalk_hardware_acceptance.sh /tmp/never-accepted.json > /tmp/rt1-gpu-no-setup.log 2>&1
+          code=$?
+          set -e
+          test "$code" -eq 2
+          grep -q 'GPU acceptance BLOCKED: missing RT1_VIDEO_RENDERER' /tmp/rt1-gpu-no-setup.log
+          test ! -e /tmp/never-accepted.json
       - name: Worker lifecycle, cancellation, STOP and HTTP tests
         run: |
           for test in \
             test_rt1_media_worker_lifecycle.py \
             test_rt1_media_worker_http.py \
+            test_rt1_worker_http_shutdown.py \
             test_rt1_media_signaling_http.py \
             test_rt1_bounded_create.py \
             test_rt1_stop_reconciler.py \
             test_rt1_ice_configuration.py \
             test_rt1_aiortc_backend_timeout.py \
+            test_rt1_musetalk_renderer.py \
+            test_rt1_musetalk_asset_digest.py \
+            test_rt1_musetalk_models_digest.py \
+            test_rt1_musetalk_offline_preflight.py \
+            test_rt1_musetalk_environment.py \
+            test_rt1_musetalk_gpu_acceptance.py \
             test_rt1_webrtc_rtp_revoke.py; do
             python "tests/e2e/$test" -v
           done

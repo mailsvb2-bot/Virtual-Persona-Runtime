@@ -15,13 +15,14 @@ use std::time::{Duration, Instant};
 const MAX_WRITE_CHUNK: usize = 16 * 1024;
 const MAX_SYSCALL_WAIT: Duration = Duration::from_millis(100);
 
+#[derive(Debug)]
 struct Connection {
     stream: TcpStream,
     revoked: AtomicBool,
 }
 
 /// A cloneable handle that interrupts an in-flight TCP send and fences later sends.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TcpWriteRevocation {
     connection: Arc<Connection>,
 }

@@ -139,9 +139,16 @@ class _Session:
 class AiortcSenderBackend:
     """Dedicated event loop for the synchronous canonical worker coordinator."""
 
-    def __init__(self, timeout: float = 8.0):
+    def __init__(self, timeout: float = 8.0, *, video_renderer=None):
+        """Optional trusted in-process video source; never a second session owner.
+
+        The default diagnostic track cannot authorize public Persona links.
+        A production GPU renderer must be passed explicitly by the worker
+        composition root and must independently prove model readiness.
+        """
         if timeout <= 0:
             raise ValueError("timeout must be positive")
+        self._video_renderer = video_renderer
         self._timeout = timeout
         self._ice_servers = parse_ice_servers(os.environ.get('RT1_ICE_SERVERS_JSON'))
         self._loop = asyncio.new_event_loop()
@@ -155,14 +162,30 @@ class AiortcSenderBackend:
         self._completed_stops: dict[str, StopReceipt] = {}
         self._thread.start()
 
-    def persona_video_ready(self) -> bool:
-        """This backend has no Persona renderer.
+    def persona_identity(self) -> tuple[str, int] | None:
+        """Identity of explicitly configured, GPU-rendered Persona assets.
 
-        _allocate currently attaches aiortc's default VideoStreamTrack solely
-        to exercise signaling/RTP lifecycle. It is a transport diagnostic, not
-        a generated Persona face, so public publication must remain blocked.
+        The backend is not an owner registry. The canonical HTTP owner and
+        worker CREATE must independently match this immutable binding.
         """
-        return False
+        if self._video_renderer is None:
+            return None
+        identity = getattr(self._video_renderer, "persona_identity", None)
+        return identity() if callable(identity) else None
+
+    def persona_video_ready(self) -> bool:
+        """A diagnostic VideoStreamTrack can never certify Persona readiness.
+
+        Only an explicitly injected renderer with a successful real-model
+        readiness probe can authorize publication. Probe failures deny access;
+        the durable lifecycle checks readiness again before CREATE.
+        """
+        if self._video_renderer is None:
+            return False
+        try:
+            return self._video_renderer.ready() is True
+        except Exception:
+            return False
 
     def _run_loop(self):
         asyncio.set_event_loop(self._loop)
@@ -215,17 +238,44 @@ class AiortcSenderBackend:
         coroutine,
         cancel_requested: threading.Event | None = None,
         cancel_identity: tuple[str, int] | None = None,
+        timeout: float | None = None,
     ):
+        # Poll the owner cancellation event while the provider coroutine is
+        # in flight. The lifecycle passes its remaining budget; this adapter
+        # enforces it on the provider operation, not a detached waiter.
+        budget = self._timeout if timeout is None else timeout
+        if not 0 < budget <= 60:
+            coroutine.close()
+            raise ValueError("invalid WebRTC operation deadline")
         future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
-        try:
-            return future.result(self._timeout)
-        except concurrent.futures.TimeoutError as exc:
-            self._fence_cancelled_create(cancel_requested, cancel_identity)
-            future.cancel()
-            raise RuntimeError("WebRTC operation timed out; STOP unconfirmed") from exc
-        except concurrent.futures.CancelledError as exc:
-            self._fence_cancelled_create(cancel_requested, cancel_identity)
-            raise RuntimeError("WebRTC operation cancelled; STOP unconfirmed") from exc
+        deadline = time.monotonic() + budget
+        while True:
+            if cancel_requested is not None and cancel_requested.is_set():
+                self._fence_cancelled_create(cancel_requested, cancel_identity)
+                future.cancel()
+                raise RuntimeError("WebRTC operation cancelled; STOP unconfirmed")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._fence_cancelled_create(cancel_requested, cancel_identity)
+                future.cancel()
+                raise RuntimeError("WebRTC operation timed out; STOP unconfirmed")
+            try:
+                result = future.result(min(remaining, 0.05))
+                if cancel_requested is not None and cancel_requested.is_set():
+                    self._fence_cancelled_create(cancel_requested, cancel_identity)
+                    future.cancel()
+                    raise RuntimeError("WebRTC operation cancelled; STOP unconfirmed")
+                if time.monotonic() >= deadline:
+                    self._fence_cancelled_create(cancel_requested, cancel_identity)
+                    future.cancel()
+                    raise RuntimeError("WebRTC operation timed out; STOP unconfirmed")
+                return result
+            except concurrent.futures.TimeoutError:
+                if future.done():
+                    raise
+            except concurrent.futures.CancelledError as exc:
+                self._fence_cancelled_create(cancel_requested, cancel_identity)
+                raise RuntimeError("WebRTC operation cancelled; STOP unconfirmed") from exc
 
     @staticmethod
     def recovery_session_id(operation_id: str, generation: int) -> str:
@@ -237,11 +287,25 @@ class AiortcSenderBackend:
         return f"rt1-{operation_id}-{generation}"
 
     def allocate(self, operation_id: str, generation: int) -> str:
-        cancel_requested = threading.Event()
+        return self.allocate_bounded(
+            operation_id, generation, self._timeout, threading.Event()
+        )
+
+    def allocate_bounded(
+        self,
+        operation_id: str,
+        generation: int,
+        timeout: float,
+        cancel_requested: threading.Event,
+    ) -> str:
+        """Allocate on the existing provider loop under caller deadline/revoke."""
+        if cancel_requested.is_set():
+            raise RuntimeError("WebRTC CREATE cancelled before dispatch")
         return self._call(
             self._allocate(operation_id, generation, cancel_requested),
             cancel_requested=cancel_requested,
             cancel_identity=(operation_id, generation),
+            timeout=timeout,
         )
 
     async def _allocate(
@@ -257,8 +321,33 @@ class AiortcSenderBackend:
             for item in self._ice_servers
         ]))
         audio = _make_pcm_audio_track()
-        video = VideoStreamTrack()
+        video = None
         try:
+            if self._video_renderer is None:
+                # Diagnostic-only RTP: never a publishable Persona.
+                video = VideoStreamTrack()
+            else:
+                # Publication readiness alone is not an allocation permit.
+                # Re-probe before creating a sender to reject failed models.
+                if not self.persona_video_ready():
+                    raise RuntimeError("Persona video renderer unavailable")
+                video = self._video_renderer.create_video_track(
+                    operation_id, generation
+                )
+                # Reject a bare aiortc diagnostic source even when the
+                # renderer incorrectly advertises itself as ready.
+                if (not isinstance(video, VideoStreamTrack)
+                        or type(video) is VideoStreamTrack):
+                    raise RuntimeError("Persona renderer returned a diagnostic video track")
+                # Real lip synchronization must consume the SAME authorized
+                # PCM that is queued on this session's audio RTP sender.
+                # The renderer method must enqueue bounded work and return
+                # promptly; inference must never run under the sender lock.
+                if not callable(getattr(video, "push_pcm", None)):
+                    raise RuntimeError("Persona video track lacks PCM sync input")
+                if not callable(getattr(video, "bind_audio_track", None)):
+                    raise RuntimeError("Persona video track lacks audio synchronization")
+                video.bind_audio_track(audio)
             peer.addTrack(audio)
             peer.addTrack(video)
             await peer.setLocalDescription(await peer.createOffer())
@@ -281,7 +370,8 @@ class AiortcSenderBackend:
             return session_id
         except BaseException:
             audio.stop()
-            video.stop()
+            if video is not None:
+                video.stop()
             await peer.close()
             raise
 
@@ -323,7 +413,10 @@ class AiortcSenderBackend:
             if entry.closed:
                 raise RuntimeError("WebRTC operation revoked during answer")
 
-    def push_pcm(self, operation_id: str, session_id: str, generation: int, pcm: bytes):
+    def push_pcm(
+        self, operation_id: str, session_id: str, generation: int,
+        pcm: bytes, *, final: bool = False,
+    ):
         """Queue bounded authorized TTS PCM on the existing RTP sender.
 
         The canonical durable worker HTTP boundary owns revocation
@@ -334,7 +427,41 @@ class AiortcSenderBackend:
             if (entry is None or entry.closed or
                     (entry.operation_id, entry.generation) != (operation_id, generation)):
                 raise RuntimeError("remote audio sender revoked")
-            entry.audio.push_pcm(pcm)
+            if self._video_renderer is not None:
+                # Model inference releases the SAME PCM to audio only once
+                # matching face frames are queued. Never play audio early.
+                # Explicit end-of-utterance flush prevents truncating the
+                # final sub-400ms authorized speech fragment.
+                if final:
+                    entry.video.push_pcm(pcm, final=True)
+                else:
+                    entry.video.push_pcm(pcm)
+            else:
+                # Legacy diagnostic RTP and test fixtures retain the original
+                # direct audio path, but cannot authorize public Persona links.
+                entry.audio.push_pcm(pcm)
+
+    def failed_renderer_sessions(self) -> tuple[tuple[str, int], ...]:
+        """Read-only health evidence for the ONE durable STOP reconciler.
+
+        A GPU error is asynchronous to the accepted PCM HTTP request.
+        Quarantine live sessions through MediaLifecycle.cancel(), never
+        close RTP peers here or invent an audio/video STOP receipt.
+        """
+        if self._video_renderer is None:
+            return ()
+        with self._lock:
+            sessions = tuple(self._sessions.values())
+        renderer_failed = not self.persona_video_ready()
+        return tuple(
+            (entry.operation_id, entry.generation)
+            for entry in sessions
+            if not entry.closed and (
+                renderer_failed or
+                (callable(getattr(entry.video, "render_failed", None))
+                 and entry.video.render_failed())
+            )
+        )
 
     def stop(self, operation_id: str, session_id: str, generation: int) -> StopReceipt:
         return self._call(self._stop(operation_id, session_id, generation))
@@ -360,6 +487,12 @@ class AiortcSenderBackend:
         # alone never authorize a durable STOP receipt.
         entry.audio.stop()
         entry.video.stop()
+        # A generated frame may still be running on CUDA after track.stop().
+        # Do not certify dual-track STOP until that worker has quiesced.
+        wait_quiesced = getattr(entry.video, "wait_quiesced", None)
+        if wait_quiesced is not None:
+            if not await asyncio.to_thread(wait_quiesced, self._timeout):
+                raise RuntimeError("Persona GPU video STOP unconfirmed")
         async with entry.gate:
             await entry.peer.close()
             if (
@@ -378,6 +511,24 @@ class AiortcSenderBackend:
                     self._sessions.pop(session_id)
             return receipt
 
+    def acknowledge_durable_stop(
+        self, operation_id: str, session_id: str, generation: int
+    ) -> bool:
+        """Release the transient STOP receipt ONLY after SQLite commits it.
+
+        Unknown/mismatched acknowledgements must never evict a receipt for
+        another session. The canonical lifecycle remains the sole authority
+        for the durable audio+video STOP verdict.
+        """
+        with self._lock:
+            receipt = self._completed_stops.get(session_id)
+            if receipt is None or (
+                receipt.operation_id, receipt.generation
+            ) != (operation_id, generation):
+                return False
+            self._completed_stops.pop(session_id, None)
+            return True
+
     def shutdown(self):
         with self._lock:
             pending = list(self._sessions.values())
@@ -387,5 +538,13 @@ class AiortcSenderBackend:
             except Exception:
                 # Caller must inspect its durable ledger and retry reconciliation.
                 pass
-        self._loop.call_soon_threadsafe(self._loop.stop)
-        self._thread.join(timeout=self._timeout)
+        if self._thread.is_alive():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=self._timeout)
+        if self._thread.is_alive():
+            raise RuntimeError("aiortc provider event loop did not stop before deadline")
+        # A stopped loop still owns selector/socket resources until close().
+        # Make repeated worker start/stop cycles deterministic and avoid
+        # ResourceWarning from the abandoned event-loop object.
+        if not self._loop.is_closed():
+            self._loop.close()

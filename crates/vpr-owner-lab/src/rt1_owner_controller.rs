@@ -34,6 +34,15 @@ impl Rt1OwnerController {
         }
     }
 
+    /// Read the reviewed Persona identity from the SAME durable workspace
+    /// used to admit and revoke visitor sessions.
+    ///
+    /// # Errors
+    /// Denies missing reviewed Persona or invalid durable workspace state.
+    pub fn current_persona_identity(&self) -> Result<(String, u64), String> {
+        self.workspace.current_persona_identity()
+    }
+
     /// Share the exact in-process visitor registry with the eventual runtime.
     /// All owner revoke and visitor admission calls must use this same instance.
     #[must_use]

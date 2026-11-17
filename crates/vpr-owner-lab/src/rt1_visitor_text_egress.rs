@@ -7,13 +7,11 @@ impl Rt1VisitorConversation {
     /// # Errors
     /// Denies revoked visitor authority or returns the canonical turn error.
     pub fn text_turn(&self, text: &str) -> Result<LabTextResult, String> {
-        // Only the canonical visitor avatar with an independent stop-only
-        // sender may execute private LLM turns. Diagnostic RTP sessions have
-        // no such LLM/STOP authority and remain denied.
-        if self.remote.is_some()
-            || self.interrupt.cancelled.load(Ordering::Acquire)
-            || self.interrupt.backend_stop.lock().is_none()
-        {
+        // The verified worker's Rt1RemoteMediaRevocation is the independent
+        // dual-track STOP owner. It intentionally has no LiveKit-only backend
+        // stop handle, so text and voice must share the same worker capability
+        // predicate instead of rejecting every remote worker session.
+        if !self.supports_private_voice() {
             return Err("RT1_VISITOR_TEXT_EGRESS_NOT_AUTHORIZED".into());
         }
         // This registration is serialized with the owner's durable
