@@ -3,7 +3,7 @@
 (() => {
   const el = (id) => document.getElementById(id);
   const status = el("status");
-  const buttons = ["provision", "publish", "pause", "unpublish", "join", "leave", "speak", "interrupt", "send-text"];
+  const buttons = ["provision", "owner-refresh", "publish", "pause", "unpublish", "join", "leave", "speak", "interrupt", "send-text"];
   let csrf = "";
   let peer = null;
   let liveKitRoom = null;
@@ -22,6 +22,67 @@
   let microphoneRequest = 0;
   let voiceRequestEpoch = 0;
   let pageHidden = false;
+  // A status response is only valid for the exact owner key that requested it.
+  // This is a read-only projection of the ONE canonical workspace, not a
+  // browser-side authority or a second PersonaVersion.
+  let ownerSnapshot = null;
+  let ownerSnapshotToken = "";
+  let ownerStatusEpoch = 0;
+  let ownerBusy = false;
+
+  function renderOwnerControls() {
+    const key = el("owner-token").value.trim();
+    const authorized = key && ownerSnapshotToken === key && ownerSnapshot;
+    const publication = authorized ? ownerSnapshot.publication_status : null;
+    el("owner-refresh").disabled = ownerBusy || !key;
+    el("provision").disabled = ownerBusy || Boolean(key);
+    el("publish").disabled = ownerBusy || !authorized || publication === "published";
+    el("pause").disabled = ownerBusy || !authorized || publication !== "published";
+    el("unpublish").disabled = ownerBusy || !authorized ||
+      !["published", "paused"].includes(publication);
+    el("persona-version").value = authorized ? String(ownerSnapshot.persona_version) : "";
+    el("owner-state").textContent = authorized
+      ? "Persona " + ownerSnapshot.persona_id + " · версия " + ownerSnapshot.persona_version +
+        " · публикация: " + (publication || "не создана")
+      : "Введите и проверьте действующий ключ владельца. Версия Persona не задаётся вручную.";
+  }
+
+  async function refreshOwnerStatus() {
+    const token = el("owner-token").value.trim();
+    const epoch = ++ownerStatusEpoch;
+    ownerSnapshot = null;
+    ownerSnapshotToken = "";
+    renderOwnerControls();
+    if (!token) return;
+    try {
+      const snapshot = await api("/api/rt1/owner/status", { owner_token: token });
+      if (epoch !== ownerStatusEpoch || el("owner-token").value.trim() !== token) return;
+      if (!Number.isSafeInteger(snapshot.persona_version) || snapshot.persona_version < 1 ||
+          typeof snapshot.persona_id !== "string" ||
+          ![null, "private", "published", "paused", "unpublished"].includes(snapshot.publication_status)) {
+        throw new Error("Сервер вернул некорректный статус Persona.");
+      }
+      ownerSnapshot = snapshot;
+      ownerSnapshotToken = token;
+      renderOwnerControls();
+    } catch (error) {
+      if (epoch !== ownerStatusEpoch || el("owner-token").value.trim() !== token) return;
+      ownerSnapshot = null;
+      ownerSnapshotToken = "";
+      renderOwnerControls();
+      message("Не удалось подтвердить ключ владельца: " + String(error.message || error), true);
+    }
+  }
+
+  el("owner-token").addEventListener("input", () => {
+    // Invalidate immediately, including responses already in flight.
+    ownerStatusEpoch += 1;
+    ownerSnapshot = null;
+    ownerSnapshotToken = "";
+    renderOwnerControls();
+  });
+  el("owner-token").addEventListener("change", () => { void refreshOwnerStatus(); });
+  el("owner-refresh").addEventListener("click", () => { void refreshOwnerStatus(); });
 
   function message(text, problem = false) {
     status.textContent = text;
@@ -62,13 +123,17 @@
   }
 
   async function busy(task) {
+    if (ownerBusy) return;
+    ownerBusy = true;
     buttons.forEach((id) => { el(id).disabled = true; });
     try {
       await task();
     } catch (error) {
       message(String(error.message || error), true);
     } finally {
+      ownerBusy = false;
       buttons.forEach((id) => { el(id).disabled = false; });
+      renderOwnerControls();
       el("join").disabled = Boolean(sessionId);
       el("leave").disabled = !sessionId;
       // A concurrent owner action must not re-enable capture while a voice turn is pending.
@@ -87,19 +152,25 @@
   el("provision").addEventListener("click", () => busy(async () => {
     const owner = await api("/api/rt1/owner/provision", {});
     el("owner-token").value = owner.owner_token;
+    await refreshOwnerStatus();
     message("Кабинет создан. Сохраните ключ владельца вне браузера.");
   }));
 
   el("publish").addEventListener("click", () => busy(async () => {
-    const expected = Number(el("persona-version").value);
+    const token = ownerToken();
+    if (!ownerSnapshot || ownerSnapshotToken !== token) {
+      throw new Error("Сначала подтвердите ключ владельца и загрузите состояние.");
+    }
+    const expected = ownerSnapshot.persona_version;
     if (!Number.isSafeInteger(expected) || expected < 1) {
       throw new Error("Неверная версия Persona.");
     }
     const result = await api("/api/rt1/owner/publish", {
-      owner_token: ownerToken(),
+      owner_token: token,
       expected_persona_version: expected
     });
     el("invite-token").value = result.visitor_token;
+    await refreshOwnerStatus();
     message("Persona опубликована. Отправьте посетителю код приглашения.");
   }));
 
@@ -111,6 +182,8 @@
   async function ownerRevoke(path) {
     invalidatePendingText();
     await api(path, { owner_token: ownerToken() });
+    el("invite-token").value = "";
+    await refreshOwnerStatus();
     message("Публикация отозвана. Удалённая остановка должна подтверждаться отдельно.");
   }
 
@@ -649,8 +722,9 @@
   // All handlers above must be installed before the UI is actionable.
   // This is a readiness receipt for the existing single RT1 script, NOT
   // provider/media admission and not permission to reopen a revoked sender.
-  for (const id of ["provision", "publish", "pause", "unpublish", "join", "unlock-audio"]) {
+  for (const id of ["join", "unlock-audio"]) {
     el(id).disabled = false;
   }
+  renderOwnerControls();
   status.dataset.rt1Ready = "true";
 })();
