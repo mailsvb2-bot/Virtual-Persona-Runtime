@@ -239,8 +239,14 @@ fn visitor_typed_question_generates_real_server_owned_pcm_without_stt() {
         .unwrap();
     assert_eq!(answer.reply, "Всё хорошо.");
     assert!(!segments.is_empty());
-    assert_eq!(answer.evidence_turn_sequence, segments[0].evidence_turn_sequence);
-    assert_eq!(answer.evidence_output_sequence, segments[0].evidence_output_sequence);
+    assert_eq!(
+        answer.evidence_turn_sequence,
+        segments[0].evidence_turn_sequence
+    );
+    assert_eq!(
+        answer.evidence_output_sequence,
+        segments[0].evidence_output_sequence
+    );
     assert_eq!(stats.stt.load(Ordering::SeqCst), 0);
     assert_eq!(stats.llm.load(Ordering::SeqCst), 1);
     assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
@@ -252,10 +258,14 @@ fn visitor_typed_question_generates_real_server_owned_pcm_without_stt() {
 fn visitor_typed_question_never_generates_silent_text_only_fallback() {
     let (mut engine, stats) = reviewed_visitor_voice_engine();
     let mut sent = 0;
-    let result = engine.text_voice_turn_streaming("Где голос?", |_| {}, |_| {
-        sent += 1;
-        Ok(())
-    });
+    let result = engine.text_voice_turn_streaming(
+        "Где голос?",
+        |_| {},
+        |_| {
+            sent += 1;
+            Ok(())
+        },
+    );
     assert!(result.is_err(), "missing canonical TTS must fail closed");
     assert_eq!(sent, 0);
     assert_eq!(stats.llm.load(Ordering::SeqCst), 0);
