@@ -45,10 +45,10 @@ fn cache_revision_and_queue_idempotence() {
             .iter()
             .any(|f| f.content.contains("шахматы"))
     );
-    assert!(matches!(
-        db.remember_reviewed(&principal, "v17_same", "lunch", "Я люблю суп", 30),
-        Ok(_)
-    ));
+    assert!(
+        db.remember_reviewed(&principal, "v17_same", "lunch", "Я люблю суп", 30)
+            .is_ok()
+    );
     assert!(matches!(
         db.remember_reviewed(&principal, "v17_same", "different", "Другой факт", 30),
         Err(MemoryError::Conflict)
