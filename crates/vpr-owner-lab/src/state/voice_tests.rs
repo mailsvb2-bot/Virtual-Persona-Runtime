@@ -9,11 +9,11 @@ use vpr_domain::{
     VerificationState,
 };
 use vpr_integration::{
-    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream, PcmSampleFormat,
-    ProviderDescriptor, ProviderError, ProviderErrorKind, RealtimeAvatarCapabilities,
-    RealtimeAvatarCapability, RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport,
-    SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence, WebRtcIceServer,
-    WebRtcSessionDescription,
+    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream,
+    PcmSampleFormat, ProviderDescriptor, ProviderError, ProviderErrorKind,
+    RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
+    RealtimeAvatarSession, RealtimeAvatarTransport, SttPort, SttRequest, Transcript, TtsPort,
+    TtsRequest, UsageEvidence, WebRtcIceServer, WebRtcSessionDescription,
 };
 
 use super::readiness::{LabModalityReadiness, LabModalityState};
