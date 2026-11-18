@@ -44,6 +44,8 @@ jobs:
           python3 tests/e2e/test_rt0_blind_voice_acceptance.py
       - name: Branch retirement safety regression
         run: python3 -m unittest discover -s tests/architecture -p test_branch_retirement.py -v
+      - name: Full architecture regression suite (including bootstrap and RT1 fences)
+        run: python3 -m unittest discover -s tests/architecture -p 'test_*.py' -q
       - name: Architecture boundaries
         run: python3 tests/architecture/check_boundaries.py
       - name: Release contracts
