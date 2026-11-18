@@ -196,7 +196,7 @@ pub(super) fn visitor_start(
                 "session_id": session_id,
                 "signal": bundle,
                 "voice_enabled": voice_enabled,
-                "diagnostic_rtp": verified_worker::selected() || std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
+                "diagnostic_rtp": !verified_worker::selected() && std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
             }),
         ),
         conversation,
