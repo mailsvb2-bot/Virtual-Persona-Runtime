@@ -1,3 +1,5 @@
+mod spoken_text;
+
 use std::sync::Arc;
 use std::time::Instant;
 

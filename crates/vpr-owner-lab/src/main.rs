@@ -91,6 +91,7 @@ struct BootstrapResponse<'a> {
     csrf_token: &'a str,
     egress_enabled: bool,
     rt0_evidence_mode: bool,
+    rt1_local_experiment_enabled: bool,
     voice_profile: Option<serde_json::Value>,
 }
 #[derive(Serialize)]
@@ -360,6 +361,7 @@ fn bootstrap_response(state: &AppState) -> HttpResponse {
                 csrf_token: &state.csrf_token,
                 egress_enabled: engine.status().egress_enabled,
                 rt0_evidence_mode: state.rt0_evidence_mode,
+                rt1_local_experiment_enabled: http_rt1::enabled(),
                 voice_profile: state
                     .voice_profile
                     .as_ref()

@@ -9,11 +9,11 @@ use vpr_domain::{
     VerificationState,
 };
 use vpr_integration::{
-    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest, PcmSampleFormat,
-    ProviderDescriptor, ProviderError, ProviderErrorKind, RealtimeAvatarCapabilities,
-    RealtimeAvatarCapability, RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport,
-    SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence, WebRtcIceServer,
-    WebRtcSessionDescription,
+    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream,
+    PcmSampleFormat, ProviderDescriptor, ProviderError, ProviderErrorKind,
+    RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
+    RealtimeAvatarSession, RealtimeAvatarTransport, SttPort, SttRequest, Transcript, TtsPort,
+    TtsRequest, UsageEvidence, WebRtcIceServer, WebRtcSessionDescription,
 };
 
 use super::readiness::{LabModalityReadiness, LabModalityState};
@@ -167,9 +167,52 @@ struct VoiceLlm {
     started: Option<mpsc::Sender<()>>,
 }
 
+struct VoiceLlmPullStream {
+    yielded: bool,
+}
+
+impl LlmTextStream for VoiceLlmPullStream {
+    fn next_chunk(
+        &mut self,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Option<String>, ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(cancelled());
+        }
+        if self.yielded {
+            return Ok(None);
+        }
+        self.yielded = true;
+        Ok(Some("Всё хорошо.".to_owned()))
+    }
+
+    fn usage(&self) -> UsageEvidence {
+        UsageEvidence::default()
+    }
+}
+
 impl LlmPort for VoiceLlm {
     fn descriptor(&self) -> ProviderDescriptor {
         descriptor("voice-llm")
+    }
+
+    fn open_stream(
+        &self,
+        request: &LlmRequest,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn LlmTextStream>, ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(cancelled());
+        }
+        // The RT1 typed-text journey must use genuine provider pull streaming.
+        assert_eq!(request.user_input, "Ответьте на вопрос посетителя");
+        self.stats.llm.fetch_add(1, Ordering::SeqCst);
+        self.stats
+            .contexts
+            .lock()
+            .unwrap()
+            .push(request.instructions.clone().unwrap_or_default());
+        Ok(Box::new(VoiceLlmPullStream { yielded: false }))
     }
 
     fn stream(

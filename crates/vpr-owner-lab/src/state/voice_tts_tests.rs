@@ -214,3 +214,61 @@ fn interrupt_during_canonical_tts_never_publishes_pcm_to_avatar() {
     assert_eq!(stats.avatar_pcm.load(Ordering::SeqCst), 0);
     assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
 }
+
+#[test]
+fn visitor_typed_question_generates_real_server_owned_pcm_without_stt() {
+    let (engine, stats) = reviewed_visitor_voice_engine();
+    let mut engine = engine.with_named_tts(
+        "piper".to_owned(),
+        Box::new(TestCanonicalTts {
+            stats: Arc::clone(&stats),
+            qwen: true,
+        }),
+    );
+    let mut segments = Vec::new();
+    let answer = engine
+        .text_voice_turn_streaming(
+            "Ответьте на вопрос посетителя",
+            |_| {},
+            |segment| {
+                assert!(segment.client_command.is_none());
+                segments.push(segment);
+                Ok(())
+            },
+        )
+        .unwrap();
+    assert_eq!(answer.reply, "Всё хорошо.");
+    assert!(!segments.is_empty());
+    assert_eq!(
+        answer.evidence_turn_sequence,
+        segments[0].evidence_turn_sequence
+    );
+    assert_eq!(
+        answer.evidence_output_sequence,
+        segments[0].evidence_output_sequence
+    );
+    assert_eq!(stats.stt.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.llm.load(Ordering::SeqCst), 1);
+    assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
+    assert!(stats.avatar_pcm.load(Ordering::SeqCst) > 0);
+    assert!(stats.tts_qwen.load(Ordering::SeqCst) > 0);
+}
+
+#[test]
+fn visitor_typed_question_never_generates_silent_text_only_fallback() {
+    let (mut engine, stats) = reviewed_visitor_voice_engine();
+    let mut sent = 0;
+    let result = engine.text_voice_turn_streaming(
+        "Где голос?",
+        |_| {},
+        |_| {
+            sent += 1;
+            Ok(())
+        },
+    );
+    assert!(result.is_err(), "missing canonical TTS must fail closed");
+    assert_eq!(sent, 0);
+    assert_eq!(stats.llm.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.avatar_pcm.load(Ordering::SeqCst), 0);
+}
