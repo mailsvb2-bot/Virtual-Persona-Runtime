@@ -199,6 +199,10 @@ test.describe.serial("RT1 verified worker visitor voice journey (synthetic local
     visitorToken = credentials.invite;
 
     const operationId = await joinVisitor(page, visitorToken, true);
+    const beforeTypedAnswer = await workerState(request);
+    const beforeTypedProviders = await providerRecords(request);
+    const ttsBeforeTyped = beforeTypedProviders.filter((item) => item.kind === "tts").length;
+    const sttBeforeTyped = beforeTypedProviders.filter((item) => item.kind === "stt").length;
     await page.locator("#visitor-text").fill("Текстовый вопрос visitor");
     const textPromise = page.waitForResponse((response) =>
       response.url().endsWith("/api/rt1/visitor/text") && response.request().method() === "POST",
@@ -208,6 +212,18 @@ test.describe.serial("RT1 verified worker visitor voice journey (synthetic local
     expect(textResponse.status()).toBe(200);
     expect((await textResponse.json()).reply).toContain("Текстовый ответ visitor");
     await expect(page.locator("#speech-result")).toContainText("Текстовый ответ visitor");
+    // A typed question must drive the SAME server-owned TTS/PCM sender as
+    // microphone input, rather than merely returning LLM text to the browser.
+    await expect.poll(async () =>
+      (await workerState(request)).pcm_pushes,
+      { timeout: 20_000 },
+    ).toBeGreaterThan(beforeTypedAnswer.pcm_pushes);
+    await expect.poll(async () =>
+      (await providerRecords(request)).filter((item) => item.kind === "tts").length,
+      { timeout: 20_000 },
+    ).toBeGreaterThan(ttsBeforeTyped);
+    expect((await providerRecords(request)).filter((item) => item.kind === "stt").length)
+      .toBe(sttBeforeTyped);
 
     const voiceResponse = await submitMicrophone(page);
     expect(voiceResponse.status()).toBe(200);
