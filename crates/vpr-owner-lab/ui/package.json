@@ -17,6 +17,6 @@
   "devDependencies": {
     "@playwright/test": "^1.65.0",
     "typescript": "5.9.2",
-    "livekit-client": "2.23.0"
+    "livekit-client": "2.24.1"
   }
 }
