@@ -33,8 +33,14 @@ class Rt1BrowserActions(unittest.TestCase):
         self.assertGreaterEqual(len(buttons.identifiers), 12)
         for identifier in buttons.identifiers:
             with self.subTest(button=identifier):
-                pattern = re.escape('el("' + identifier + '").addEventListener("click"')
-                self.assertRegex(js, pattern)
+                direct = re.escape('el("' + identifier + '").addEventListener("click"')
+                if identifier.startswith("memory-") and identifier != "memory-admin-refresh":
+                    # All memory buttons register through the canonical action helper;
+                    # verify the helper and every individual button ID.
+                    self.assertIn('el(id).addEventListener("click"', js)
+                    self.assertRegex(js, re.escape('memoryAction("' + identifier + '",'))
+                else:
+                    self.assertRegex(js, direct)
 
     def test_browser_api_paths_are_registered_by_single_canonical_router(self):
         js = (UI / "rt1.js").read_text(encoding="utf-8")

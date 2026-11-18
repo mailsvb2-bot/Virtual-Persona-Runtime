@@ -254,6 +254,16 @@ for manifest_path in ROOT.rglob("Cargo.toml"):
     manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
     forbidden = dependency_packages(manifest) & database_packages
     if forbidden:
+        # Source-only research may use PostgreSQL ONLY in the isolated staging
+        # crate, with explicit opt-in. RT1 durable state is NOT promoted.
+        if manifest_path.relative_to(ROOT).as_posix() == "staging/rt1-memory-postgres/Cargo.toml" and forbidden == {"postgres"}:
+            owner_manifest = tomllib.loads((ROOT / "crates/vpr-owner-lab/Cargo.toml").read_text(encoding="utf-8"))
+            dependency = owner_manifest["dependencies"].get("vpr-rt1-text-memory-postgres")
+            if not isinstance(dependency, dict) or dependency.get("optional") is not True:
+                raise SystemExit("staging PostgreSQL must be optional in the owner-lab runtime")
+            if owner_manifest.get("features", {}).get("rt1-memory-postgres") != ["dep:vpr-rt1-text-memory-postgres"]:
+                raise SystemExit("staging PostgreSQL must have a single explicit opt-in feature")
+            continue
         raise SystemExit(
             "database dependency introduced while RT1 durable persistence is still research-only: "
             + f"{manifest_path.relative_to(ROOT)} -> {sorted(forbidden)}"

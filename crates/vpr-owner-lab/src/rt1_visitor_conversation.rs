@@ -32,6 +32,9 @@ use helpers::{
     revoked_diagnostic_offer_error, validate_microphone_audio,
 };
 
+#[path = "rt1_visitor_memory.rs"]
+mod memory;
+
 #[derive(Default)]
 struct LiveVisitorInterrupt {
     cancelled: AtomicBool,
@@ -77,7 +80,9 @@ impl LiveVisitorInterrupt {
 pub struct Rt1VisitorConversation {
     manager: Arc<VisitorSessionManager>,
     id: String,
+    memory_persona_id: String,
     engine: Mutex<OwnerLabEngine>,
+    memory_fingerprint: Mutex<Option<[u8; 32]>>,
     interrupt: Arc<LiveVisitorInterrupt>,
     remote: Option<Arc<Rt1RemoteMediaRevocation>>,
     // Only start_with_verified_worker may authorize PCM speech.
@@ -186,6 +191,8 @@ impl Rt1VisitorConversation {
             Self {
                 manager,
                 id,
+                memory_persona_id: persona_id,
+                memory_fingerprint: Mutex::new(engine.memory_binding_fingerprint()),
                 engine: Mutex::new(engine),
                 interrupt,
                 verified_worker_voice: remote.is_some(),
@@ -302,6 +309,8 @@ impl Rt1VisitorConversation {
             Self {
                 manager,
                 id,
+                memory_persona_id: persona_id,
+                memory_fingerprint: Mutex::new(engine.memory_binding_fingerprint()),
                 engine: Mutex::new(engine),
                 interrupt,
                 remote: Some(remote),

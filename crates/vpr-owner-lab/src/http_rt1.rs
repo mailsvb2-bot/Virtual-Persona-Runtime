@@ -12,6 +12,9 @@ use vpr_owner_lab::{
 
 use super::{AppState, HttpResponse, error_response, json_response, parse_json};
 
+#[cfg(feature = "rt1-memory-postgres")]
+#[path = "http_rt1_memory.rs"]
+mod memory;
 #[path = "http_rt1_transport.rs"]
 mod transport;
 
@@ -74,6 +77,8 @@ use start::visitor_start;
 struct VisitorStart {
     visitor_token: String,
     consent: bool,
+    #[serde(default)]
+    memory_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -177,6 +182,10 @@ pub(super) fn route_post(
     request: &mut tiny_http::Request,
     state: &Arc<AppState>,
 ) -> Option<Rt1RoutedResponse> {
+    #[cfg(feature = "rt1-memory-postgres")]
+    if let Some(response) = memory::route(path, request, state) {
+        return Some(response);
+    }
     // Never serialize a visitor LLM or microphone result and then drop its
     // authority before the HTTP writer gets the response.
     if path == "/api/rt1/visitor/start" {

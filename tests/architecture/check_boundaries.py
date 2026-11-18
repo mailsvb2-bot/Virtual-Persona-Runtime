@@ -112,6 +112,17 @@ for crate, allowed in allowed_internal_dependencies.items():
     manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
     dependencies = all_dependency_names(manifest)
     internal = {name for name in dependencies if name.startswith("vpr-")}
+    # This source-only RT1 memory experiment is explicitly optional. It has no
+    # dependency back into OwnerLab or other VPR crates and is not a new brain.
+    if crate == "vpr-owner-lab" and "vpr-rt1-text-memory-postgres" in internal:
+        memory = manifest.get("dependencies", {}).get("vpr-rt1-text-memory-postgres")
+        if not (isinstance(memory, dict)
+                and memory.get("optional") is True
+                and manifest.get("features", {}).get("rt1-memory-postgres")
+                    == ["dep:vpr-rt1-text-memory-postgres"]
+                and (ROOT / "staging/rt1-memory-postgres/Cargo.toml").is_file()):
+            raise SystemExit("RT1 memory must be a single optional staging-only dependency")
+        internal.remove("vpr-rt1-text-memory-postgres")
     forbidden = internal - allowed
     if forbidden:
         raise SystemExit(

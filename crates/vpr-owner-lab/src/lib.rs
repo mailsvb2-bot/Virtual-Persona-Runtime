@@ -1,4 +1,5 @@
 mod evidence;
+mod memory_port;
 mod owner_capture;
 mod owner_context;
 mod persona_file_io;
@@ -27,6 +28,7 @@ pub use evidence::{
     RT0_OWNER_LAB_MAX_AV_SYNC_SAMPLES, RT0_OWNER_LAB_MAX_MEDIA_EVENTS,
     RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
+pub use memory_port::MemoryContextPort;
 
 pub use owner_capture::{
     OwnerCaptureClaim, OwnerCaptureError, OwnerCaptureQuestion, OwnerCaptureSnapshot,
