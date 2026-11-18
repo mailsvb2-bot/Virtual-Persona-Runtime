@@ -8,6 +8,7 @@ on:
       - 'crates/vpr-provider-local-open-source/**'
       - 'scripts/rt1_*'
       - 'tests/e2e/run_rt1_*'
+      - 'tests/architecture/test_rt1_browser_action_routes.py'
       - '.github/workflows/rt1-owner-visitor-canary.yml'
   workflow_dispatch:
 
