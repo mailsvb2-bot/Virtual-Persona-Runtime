@@ -895,8 +895,11 @@
     const content = el("memory-content").value.trim();
     const key = el("memory-key").value.trim();
     const operation_id = crypto.randomUUID();
-    await api("/api/rt1/visitor/memory/remember", {
+    const result = await api("/api/rt1/visitor/memory/remember", {
       ...requireMemorySession(), memory_token: memoryToken(), key, content, operation_id });
+    if (result.saved !== true || result.ok !== true) {
+      throw new Error("Сохранение не подтверждено сервером.");
+    }
     memoryPrint("Сервер подтвердил сохранение заметки: " + key);
   });
   memoryAction("memory-list", async () => {

@@ -12,7 +12,8 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 use vpr_owner_lab::Rt1VisitorConversation;
 use vpr_rt1_text_memory_postgres::{
-    MemoryError, MemorySource, StablePrincipal, TextMemory,
+    MemoryError, StablePrincipal, TextMemory,
+    advanced::ConsolidationResult,
     egress::{MemoryEgressFence, StopResult},
 };
 
@@ -270,16 +271,24 @@ fn handle_note_action(
                 .operation_id
                 .as_deref()
                 .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
-            db.remember(
-                principal,
-                id,
-                key,
-                content,
-                MemorySource::VisitorExplicit,
-                365,
-            )
-            .map_err(denied)?;
-            serde_json::json!({"ok":true,"saved":true})
+            // HTTP and voice-outbox writes use one versioned PostgreSQL owner.
+            let outcome = db.remember_reviewed(principal, id, key, content, 365)
+                .map_err(|e| match e {
+                    MemoryError::InvalidInput => error_response(400, "RT1_MEMORY_INVALID_INPUT"),
+                    MemoryError::NotConsented => error_response(403, "RT1_MEMORY_DENIED"),
+                    MemoryError::Conflict => error_response(409, "RT1_MEMORY_CONFLICT"),
+                    MemoryError::Capacity => error_response(409, "RT1_MEMORY_CAPACITY"),
+                    MemoryError::Unavailable => error_response(503, "RT1_MEMORY_DB_UNAVAILABLE"),
+                })?;
+            let label = match outcome {
+                ConsolidationResult::Inserted => "inserted",
+                ConsolidationResult::Corrected => "corrected",
+                ConsolidationResult::Unchanged => "unchanged",
+                ConsolidationResult::NeedsConfirmation => {
+                    return Err(error_response(409, "RT1_MEMORY_CONFIRMATION_REQUIRED"));
+                }
+            };
+            serde_json::json!({"ok":true,"saved":true,"outcome":label})
         }
         "/api/rt1/visitor/memory/contradictions" => {
             let content = body
