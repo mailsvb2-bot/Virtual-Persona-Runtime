@@ -2147,18 +2147,18 @@ const finishMicrophoneTurn = async () => {
             if (deliveryGeneration !== voiceDeliveryGeneration)
                 return;
             const command = segment.client_command;
-            if (!command) {
-                if (deliveryGeneration === voiceDeliveryGeneration)
-                    setLocalAudioMuted(false);
-                serverDeliveredSpeechObserved = true;
-                return;
-            }
             const voiceForSegment = activeVoiceEvidence;
             if (voiceForSegment?.requestSequence === requestSequence) {
                 voiceForSegment.providerPlaybackExpectedCount += 1;
                 providerPlaybackInFlight = true;
                 syncRt0PlaybackPending(voiceForSegment);
                 updateControls();
+            }
+            if (!command) {
+                if (deliveryGeneration === voiceDeliveryGeneration)
+                    setLocalAudioMuted(false);
+                serverDeliveredSpeechObserved = true;
+                return;
             }
             if (deliveryGeneration === voiceDeliveryGeneration)
                 setLocalAudioMuted(false);
