@@ -385,7 +385,7 @@
   }
 
   async function beginMicrophone() {
-    if (!sessionId || stopping || microphone || microphonePending || !voiceEnabled || voiceInFlight) return;
+    if (!sessionId || stopping || microphone || microphonePending || !voiceEnabled || voiceInFlight || textInFlight) return;
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("Микрофон доступен только в защищённом браузере.");
     }
@@ -471,6 +471,7 @@
     voiceInFlight = true;
     const epoch = voiceRequestEpoch;
     el("speak").disabled = true;
+    el("send-text").disabled = true;
     message("Persona обрабатывает голосовой запрос…");
     try {
       const result = await api("/api/rt1/visitor/voice", {
@@ -493,7 +494,8 @@
       }
     } finally {
       voiceInFlight = false;
-      el("speak").disabled = !sessionId || stopping || !voiceEnabled;
+      el("speak").disabled = !sessionId || stopping || !voiceEnabled || textInFlight;
+      el("send-text").disabled = !sessionId || stopping || pageHidden || textInFlight || microphonePending || Boolean(microphone);
     }
   }
 
@@ -534,7 +536,7 @@
   });
 
   el("send-text").addEventListener("click", async () => {
-    if (!sessionId || stopping || pageHidden || textInFlight) return;
+    if (!sessionId || stopping || pageHidden || textInFlight || voiceInFlight || microphonePending || microphone) return;
     const text = el("visitor-text").value.trim();
     if (!text || text.length > 8192) {
       message("Введите вопрос до 8192 символов.", true);
@@ -547,13 +549,14 @@
     textController = controller;
     const timeout = setTimeout(() => controller.abort(), 20000);
     el("send-text").disabled = true;
+    el("speak").disabled = true;
     el("interrupt").disabled = !sessionId || stopping || microphonePending;
     try {
       const result = await api("/api/rt1/visitor/text", { session_id: id, text }, controller.signal);
       if (sessionId !== id || stopping || pageHidden || epoch !== textRequestEpoch) return;
       el("speech-result").textContent = "Вы: " + text + " · Persona: " + result.reply;
       el("visitor-text").value = "";
-      message("Persona ответила на текстовый вопрос.");
+      message("Текстовый ответ передан каноническому голосовому медиатракту Persona.");
     } catch (error) {
       if (sessionId === id && !stopping && !pageHidden && epoch === textRequestEpoch) {
         message(error.name === "AbortError" ? "Текстовый запрос прерван." : String(error.message || error), error.name !== "AbortError");
@@ -563,7 +566,8 @@
       if (textController === controller) {
         textController = null;
         textInFlight = false;
-        el("send-text").disabled = !sessionId || stopping || pageHidden;
+        el("send-text").disabled = !sessionId || stopping || pageHidden || voiceInFlight || microphonePending || Boolean(microphone);
+        el("speak").disabled = !sessionId || stopping || pageHidden || !voiceEnabled || voiceInFlight || microphonePending;
         el("interrupt").disabled = !sessionId || stopping || pageHidden || (!voiceEnabled && !textInFlight) || microphonePending;
       }
     }
