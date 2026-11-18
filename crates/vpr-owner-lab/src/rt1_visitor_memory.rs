@@ -1,10 +1,12 @@
 //! Memory operations of the canonical visitor conversation.
-use super::*;
+use super::{Arc, Rt1VisitorConversation};
 use crate::MemoryContextPort;
 
 // Canonical visitor memory methods; no separate session runtime.
 impl Rt1VisitorConversation {
     /// Canonical persona ID, only after checking publication/session scope.
+    /// # Errors
+    /// Returns a refusal when this visitor session is no longer authorized.
     pub fn memory_persona_id(&self) -> Result<String, String> {
         self.manager.authorize(&self.id)?;
         Ok(self.memory_persona_id.clone())
@@ -25,6 +27,8 @@ impl Rt1VisitorConversation {
     }
     /// Immediately cancel local future provider admission, then invoke the
     /// existing remote both-track STOP. Never hold a registry lock during I/O.
+    /// # Errors
+    /// Returns a STOP error if remote media revocation cannot be confirmed.
     pub fn revoke_memory_session(&self) -> Result<(), String> {
         self.interrupt.revoke_authority_only();
         self.close()
@@ -35,9 +39,13 @@ impl Rt1VisitorConversation {
         }
         self.engine.lock().memory_save_receipt_for(credential)
     }
+    /// # Errors
+    /// Rejects an expired, revoked or unauthorized visitor session.
     pub fn authorize_memory_action(&self) -> Result<(), String> {
         self.manager.authorize(&self.id)
     }
+    /// # Errors
+    /// Rejects a revoked session or mismatched personal memory credential.
     pub fn bind_memory(&self, port: Arc<dyn MemoryContextPort>) -> Result<(), String> {
         self.manager.authorize(&self.id)?;
         // One verified memory identity per live visitor engine. Any attempt

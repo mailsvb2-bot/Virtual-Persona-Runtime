@@ -1,4 +1,4 @@
-//! Low-cost optional memory boundary of the EXISTING OwnerLabEngine.
+//! Low-cost optional memory boundary of the EXISTING `OwnerLabEngine`.
 //! This source is installed into crates/vpr-owner-lab/src/memory_port.rs.
 //! It does not depend on any SQL driver or create a second runtime.
 use crate::state::{LabError, OwnerLabEngine};
@@ -7,9 +7,13 @@ use std::sync::Arc;
 pub trait MemoryContextPort: Send + Sync {
     /// Return the current message with a bounded memory DATA attachment, not
     /// replacement system instructions. No other LLM or conversation path.
+    /// # Errors
+    /// Returns `LabError` when bound memory is unavailable or no longer authorized.
     fn contextualize_user_input(&self, text: &str) -> Result<String, LabError>;
     /// A live authorization lease covering provider LLM dispatch.
     /// The executor must keep this RAII value alive until provider operation ends.
+    /// # Errors
+    /// Denies provider access if the current memory consent or lease is invalid.
     fn authorize_provider_egress(&self) -> Result<Option<Box<dyn Send>>, LabError> {
         Ok(None)
     }
@@ -29,13 +33,17 @@ pub trait MemoryContextPort: Send + Sync {
 
 impl OwnerLabEngine {
     /// Server-owned reviewed Persona ID, never a browser-submitted ID.
+    /// # Errors
+    /// Refuses memory binding without a reviewed Persona identity.
     pub fn memory_persona_id(&self) -> Result<String, LabError> {
         self.reviewed_persona_binding()
             .map(|(id, _)| id.to_owned())
             .ok_or(LabError::InvalidState)
     }
     /// Only a trusted, identity-authenticated visitor factory may call this.
-    /// OwnerLabEngine itself remains the sole STT->LLM->TTS->avatar executor.
+    /// `OwnerLabEngine` itself remains the sole STT->LLM->TTS->avatar executor.
+    /// # Errors
+    /// Refuses an incompatible credential or an unauthorized memory binding.
     pub fn bind_memory_port(&mut self, port: Arc<dyn MemoryContextPort>) -> Result<(), LabError> {
         // Authorized RT1 conversation adapter serializes this operation with
         // provider turns under its existing engine lock. Rebinding after a
@@ -70,6 +78,7 @@ impl OwnerLabEngine {
             None => Ok(text.to_owned()),
         }
     }
+    #[must_use]
     pub fn memory_binding_fingerprint(&self) -> Option<[u8; 32]> {
         self.memory_port
             .as_ref()

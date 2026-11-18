@@ -250,7 +250,7 @@ impl OwnerLabEngine {
         let request = LlmRequest {
             locale: transcript.locale.clone(),
             instructions: Some(instructions),
-            user_input: user_input,
+            user_input,
         };
         let pre_llm_millis = elapsed_millis(total_started);
         let llm = self.llm.as_ref().ok_or(LabError::InvalidState)?;
@@ -335,7 +335,7 @@ impl OwnerLabEngine {
         let request = LlmRequest {
             locale: transcript.locale.clone(),
             instructions: Some(instructions),
-            user_input: user_input,
+            user_input,
         };
         let pre_llm_millis = elapsed_millis(total_started);
 

@@ -111,7 +111,7 @@ impl OwnerLabEngine {
                 &LlmRequest {
                     locale: "ru-RU".to_owned(),
                     instructions: Some(instructions),
-                    user_input: user_input,
+                    user_input,
                 },
                 &mut generated,
             )

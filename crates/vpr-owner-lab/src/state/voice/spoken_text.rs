@@ -40,7 +40,7 @@ impl OwnerLabEngine {
         let request = LlmRequest {
             locale: "ru-RU".to_owned(),
             instructions: Some(self.memory_instructions(input)?),
-            user_input: user_input,
+            user_input,
         };
         let llm = self.llm.as_ref().ok_or(LabError::InvalidState)?;
         let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
