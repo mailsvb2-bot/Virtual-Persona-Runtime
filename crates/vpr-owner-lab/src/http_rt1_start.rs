@@ -104,6 +104,10 @@ pub(super) fn visitor_start(
     if !matches!(restore_reviewed_persona(&mut engine), Ok(true)) {
         return Err(error_response(409, "RT1_PERSONA_NOT_REVIEWED"));
     }
+    if let Some(memory_token) = body.memory_token.as_deref() {
+        super::memory::bind_on_start(&mut engine, memory_token)
+            .map_err(|_|error_response(403,"RT1_MEMORY_BIND_DENIED"))?;
+    }
     let manager = Rt1OwnerController::new().visitor_sessions();
     let started = if let Some(worker) = worker {
         let retry_id = session_id.clone();

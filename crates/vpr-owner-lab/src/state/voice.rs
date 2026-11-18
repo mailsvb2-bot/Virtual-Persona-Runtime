@@ -244,11 +244,13 @@ impl OwnerLabEngine {
         let (transcript, stt_usage) = stt_input.finish(&turn, stt.as_ref())?;
         let stt_millis = elapsed_millis(stt_started);
         eprintln!("VPR voice stage=stt_complete");
-        let instructions = self.conversation_instructions()?;
+        let instructions = self.memory_instructions(&transcript.text)?;
+        let user_input = self.memory_user_input(&transcript.text)?;
+        let _memory_egress = self.memory_provider_guard()?;
         let request = LlmRequest {
             locale: transcript.locale.clone(),
             instructions: Some(instructions),
-            user_input: transcript.text.clone(),
+            user_input: user_input,
         };
         let pre_llm_millis = elapsed_millis(total_started);
         let llm = self.llm.as_ref().ok_or(LabError::InvalidState)?;
@@ -270,6 +272,7 @@ impl OwnerLabEngine {
             .ok_or_else(|| terminalize_failed_turn(&turn, LabError::InvalidInput))?;
         turn.complete().map_err(LabError::Runtime)?;
 
+        self.memory_after_success(&transcript.text, evidence_turn_sequence);
         Ok(LabVoiceResult {
             transcript: transcript.text,
             reply: generation.reply,
@@ -326,11 +329,13 @@ impl OwnerLabEngine {
         let stt_started = Instant::now();
         let (transcript, stt_usage) = transcribe_voice_audio(&turn, stt.as_ref(), &audio)?;
         let stt_millis = elapsed_millis(stt_started);
-        let instructions = self.conversation_instructions()?;
+        let instructions = self.memory_instructions(&transcript.text)?;
+        let user_input = self.memory_user_input(&transcript.text)?;
+        let _memory_egress = self.memory_provider_guard()?;
         let request = LlmRequest {
             locale: transcript.locale.clone(),
             instructions: Some(instructions),
-            user_input: transcript.text.clone(),
+            user_input: user_input,
         };
         let pre_llm_millis = elapsed_millis(total_started);
 
@@ -359,6 +364,7 @@ impl OwnerLabEngine {
             .ok_or_else(|| terminalize_failed_turn(&turn, LabError::InvalidInput))?;
         turn.complete().map_err(LabError::Runtime)?;
 
+        self.memory_after_success(&transcript.text, evidence_turn_sequence);
         Ok(LabVoiceResult {
             transcript: transcript.text,
             reply: generation.reply,

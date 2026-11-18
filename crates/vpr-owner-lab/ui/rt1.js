@@ -676,7 +676,7 @@
     const visitor_token = el("visitor-token").value.trim();
     if (!visitor_token) throw new Error("Введите код приглашения.");
     message("Устанавливается защищённое медиасоединение…");
-    const start = await api("/api/rt1/visitor/start", { visitor_token, consent: true });
+    const start = await api("/api/rt1/visitor/start", { visitor_token, consent: true, memory_token: el("memory-token").value.trim() || undefined });
     const joinedId = start.session_id;
     sessionId = joinedId;
     // The tab may have left while CREATE was still in flight and no session
@@ -827,6 +827,182 @@
     // BFCache must never resurrect the old authorization or media sender.
     if (event.persisted && pageHidden) window.location.reload();
   });
+
+
+  // Memory controls share RT1's canonical CSRF-protected API client and
+  // the actual server-owned visitor session. Never use invitation code
+  // as a personal identity, or store the memory secret in localStorage.
+  const memoryButtonIds = ["memory-enroll", "memory-connect", "memory-enable",
+    "memory-disable", "memory-save", "memory-list", "memory-receipt", "memory-forget",
+    "memory-erase", "memory-revoke", "memory-rotate"];
+  function memoryToken() { return el("memory-token").value.trim(); }
+  function requireMemorySession() {
+    if (!sessionId || stopping || pageHidden) throw new Error("Сначала подключитесь к аватару.");
+    return { session_id: sessionId };
+  }
+  function memoryPrint(message) { el("memory-output").textContent = message; }
+  function memoryAction(id, fn) {
+    el(id).addEventListener("click", () => busy(async () => {
+      try { await fn(); } catch (error) {
+        memoryPrint("Ошибка: " + String(error.message || error));
+        throw error;
+      }
+    }));
+  }
+  memoryAction("memory-enroll", async () => {
+    const response = await api("/api/rt1/visitor/memory/enroll", requireMemorySession());
+    el("memory-token").value = response.memory_token;
+    memoryPrint("Личный ключ создан. Сохраните его в менеджере паролей. Теперь нажмите «Разрешить память». ");
+  });
+  memoryAction("memory-connect", async () => {
+    const response = await api("/api/rt1/visitor/memory/connect", {
+      ...requireMemorySession(), memory_token: memoryToken() });
+    memoryPrint(response.memory_connected ? "Память подключена к этой беседе." : "Не удалось подключить память.");
+  });
+  memoryAction("memory-enable", async () => {
+    await api("/api/rt1/visitor/memory/consent", {
+      ...requireMemorySession(), memory_token: memoryToken(), enabled: true });
+    await api("/api/rt1/visitor/memory/connect", {
+      ...requireMemorySession(), memory_token: memoryToken() });
+    memoryPrint("Память разрешена и подключена к этой беседе.");
+  });
+  memoryAction("memory-disable", async () => {
+    let confirmed = false;
+    try {
+      await api("/api/rt1/visitor/memory/consent", {
+        ...requireMemorySession(), memory_token: memoryToken(), enabled: false });
+      confirmed = true;
+    } finally {
+      // Local STOP on any outcome; remote STOP may remain uncertain.
+      cleanupLocal();
+      sessionId = null;
+      el("send-text").disabled = true;
+      el("speak").disabled = true;
+      el("interrupt").disabled = true;
+      memoryPrint(confirmed
+        ? "Память отключена и заметки удалены. Разговор остановлен."
+        : "Отзыв или удалённая остановка не подтверждены. Локальный разговор заблокирован; проверьте статус на сервере.");
+    }
+  });
+  memoryAction("memory-save", async () => {
+    const content = el("memory-content").value.trim();
+    const key = el("memory-key").value.trim();
+    const operation_id = crypto.randomUUID();
+    await api("/api/rt1/visitor/memory/remember", {
+      ...requireMemorySession(), memory_token: memoryToken(), key, content, operation_id });
+    memoryPrint("Сервер подтвердил сохранение заметки: " + key);
+  });
+  memoryAction("memory-list", async () => {
+    const facts = [];
+    let cursor = null;
+    for (let page = 0; page < 6; page++) {
+      const data = await api("/api/rt1/visitor/memory/list", {
+        ...requireMemorySession(), memory_token: memoryToken(), cursor });
+      facts.push(...data.facts);
+      if (!data.next_cursor) { cursor = null; break; }
+      if (data.next_cursor === cursor) throw new Error("Повторяющийся курсор памяти.");
+      cursor = data.next_cursor;
+    }
+    if (cursor) throw new Error("Не удалось получить всю память.");
+    memoryPrint(facts.length ? facts.map(f => `${f.key}: ${f.content}`).join("\n") : "Память пуста.");
+  });
+  memoryAction("memory-receipt", async () => {
+    const data = await api("/api/rt1/visitor/memory/receipt", {
+      ...requireMemorySession(), memory_token: memoryToken() });
+    memoryPrint(data.last_explicit_note || "Нет подтверждения запоминания в текущей беседе.");
+  });
+  memoryAction("memory-forget", async () => {
+    const key = el("memory-key").value.trim();
+    await api("/api/rt1/visitor/memory/forget", {
+      ...requireMemorySession(), memory_token: memoryToken(), key, operation_id: crypto.randomUUID() });
+    memoryPrint("Сервер подтвердил удаление заметки: " + key);
+  });
+  memoryAction("memory-erase", async () => {
+    if (!window.confirm("Удалить все воспоминания?")) return;
+    try {
+      await api("/api/rt1/visitor/memory/erase", {
+        ...requireMemorySession(), memory_token: memoryToken() });
+    } finally {
+      cleanupLocal();
+      sessionId = null;
+      el("send-text").disabled = true;
+      el("speak").disabled = true;
+      el("interrupt").disabled = true;
+    }
+    memoryPrint("Память удалена и разговор остановлен. Для продолжения подключитесь повторно.");
+  });
+  memoryAction("memory-revoke", async () => {
+    if (!window.confirm("Удалить все воспоминания и навсегда отозвать личный ключ?")) return;
+    try {
+      await api("/api/rt1/visitor/memory/revoke", {
+        ...requireMemorySession(), memory_token: memoryToken() });
+    } finally {
+      cleanupLocal();
+      sessionId = null;
+      el("send-text").disabled = true;
+      el("speak").disabled = true;
+      el("interrupt").disabled = true;
+    }
+    el("memory-token").value = "";
+    memoryPrint("Ключ отозван, память удалена и разговор остановлен. Создайте новую память для следующего сеанса.");
+  });
+
+  memoryAction("memory-rotate", async () => {
+    if (!window.confirm("Заменить личный ключ? Старый ключ немедленно перестанет работать.")) return;
+    const data = await api("/api/rt1/visitor/memory/rotate", {
+      ...requireMemorySession(), memory_token: memoryToken() });
+    el("memory-token").value = data.memory_token;
+    cleanupLocal();
+    sessionId = null;
+    el("send-text").disabled = true;
+    el("speak").disabled = true;
+    el("interrupt").disabled = true;
+    memoryPrint("Ключ заменён. Сохраните его в менеджере паролей и начните новый разговор; старый разговор остановлен.");
+  });
+
+  let memorySummaryDigest = null;
+  memoryAction("memory-contradictions", async () => {
+    const data = await api("/api/rt1/visitor/memory/contradictions", {
+      ...requireMemorySession(), memory_token: memoryToken(), content: el("memory-content").value.trim() });
+    memoryPrint(data.candidates.length ? data.candidates.map(f => `${f.key}: ${f.content}`).join("\n") : "Противоречия не найдены. Автоматическая перезапись запрещена.");
+  });
+  memoryAction("memory-validity", async () => {
+    const parseOptional = id => el(id).value.trim() ? Number(el(id).value) : null;
+    await api("/api/rt1/visitor/memory/validity", { ...requireMemorySession(),
+      memory_token: memoryToken(), key: el("memory-key").value.trim(),
+      valid_from: parseOptional("memory-valid-from"), valid_until: parseOptional("memory-valid-until") });
+    memoryPrint("Сроки актуальности изменены.");
+  });
+  memoryAction("memory-summary-draft", async () => {
+    const data=await api("/api/rt1/visitor/memory/summary/draft", {
+      ...requireMemorySession(),memory_token:memoryToken() });
+    memorySummaryDigest=data.source_digest;
+    el("memory-summary-content").value=data.text;
+    memoryPrint("Проверьте текст и подтвердите его явно. Автоматического одобрения нет.");
+  });
+  memoryAction("memory-summary-approve", async () => {
+    if (!memorySummaryDigest) throw new Error("Сначала подготовьте проект резюме.");
+    await api("/api/rt1/visitor/memory/summary/approve", {
+      ...requireMemorySession(),memory_token:memoryToken(),
+      source_digest:memorySummaryDigest,
+      key:el("memory-summary-key").value.trim(),
+      content:el("memory-summary-content").value.trim() });
+    memoryPrint("Резюме подтверждено и записано.");
+  });
+  memoryAction("memory-summary-list", async () => {
+    const data=await api("/api/rt1/visitor/memory/summary/list",{
+      ...requireMemorySession(),memory_token:memoryToken() });
+    memoryPrint(data.summaries.length ? data.summaries.map(([key,value])=>`${key}: ${value}`).join("\n") : "Резюме пока нет.");
+  });
+
+  // Owner-authorized, aggregate-only memory status; no visitor secrets exposed.
+  el("memory-admin-refresh").addEventListener("click", () => busy(async () => {
+    const owner_token = el("owner-token").value.trim();
+    if (!owner_token) throw new Error("Введите ключ владельца.");
+    const data = await api("/api/rt1/owner/memory/admin", { owner_token });
+    el("memory-admin-status").textContent =
+      `Профилей: ${data.active_subjects}; фактов: ${data.facts}; очередь: ${data.queued_writes}; истекли: ${data.expired_facts}; удаление: ${data.unreconciled_erasures}`;
+  }));
 
   // All handlers above must be installed before the UI is actionable.
   // This is a readiness receipt for the existing single RT1 script, NOT

@@ -28,6 +28,8 @@
 <label>Локальная ссылка для посетителя <input id="invite-link" readonly placeholder="Появится после публикации"></label>
 <button id="copy-invite" type="button" disabled>Скопировать ссылку для посетителя</button>
 <p>Ссылка работает только на том же локальном адресе Owner Lab. Это не публичная публикация и не доступ с другого устройства.</p>
+<button id="memory-admin-refresh" type="button">Статус памяти</button>
+<p id="memory-admin-status" role="status"></p>
 </section>
 <section id="visitor-panel">
 <h2>Посетитель</h2>
@@ -49,6 +51,46 @@
 <button id="send-text" type="button" disabled>Отправить вопрос</button>
 <p id="speech-result" aria-live="polite"></p>
 </section>
+<section id="memory-panel" aria-label="Память собеседника">
+<h2>Моя память</h2>
+<p>Память хранит только текстовые заметки. Ключ личный: это не код приглашения. Не делитесь им и сохраните в защищённом менеджере паролей. Без ключа память нельзя восстановить.</p>
+<label>Личный ключ памяти <input id="memory-token" type="password" autocomplete="off" maxlength="64" placeholder="Личный ключ (64 символа)"></label>
+<div class="actions">
+  <button id="memory-enroll" type="button">Создать личную память</button>
+  <button id="memory-connect" type="button">Подключить память</button>
+  <button id="memory-enable" type="button">Разрешить память</button>
+  <button id="memory-disable" type="button">Отозвать согласие</button>
+</div>
+<p>Секрет показывается только при создании и остаётся в поле ввода до закрытия страницы. Для другого устройства перенесите его самостоятельно.</p>
+<label>Ключ заметки <input id="memory-key" maxlength="96" placeholder="например family-school"></label>
+<label>Текст заметки <textarea id="memory-content" maxlength="2048" rows="3" placeholder="Что именно аватар должен помнить"></textarea></label>
+<div class="actions">
+  <button id="memory-save" type="button">Сохранить / исправить</button>
+  <button id="memory-list" type="button">Посмотреть</button>
+  <button id="memory-receipt" type="button">Проверить запоминание в разговоре</button>
+  <button id="memory-forget" type="button">Забыть заметку</button>
+  <button id="memory-erase" type="button">Удалить всю память</button>
+  <button id="memory-rotate" type="button">Заменить личный ключ</button>
+  <button id="memory-revoke" type="button">Удалить память и отозвать ключ</button>
+</div>
+<fieldset>
+<legend>Проверка и сроки воспоминаний</legend>
+<button id="memory-contradictions" type="button">Проверить возможные противоречия</button>
+<label>Действует с (Unix seconds; пусто — без ограничения) <input id="memory-valid-from" type="number" step="1"></label>
+<label>Действует до (Unix seconds; пусто — без ограничения) <input id="memory-valid-until" type="number" step="1"></label>
+<button id="memory-validity" type="button">Установить актуальность</button>
+</fieldset>
+<fieldset>
+<legend>Подтверждённое резюме памяти</legend>
+<button id="memory-summary-draft" type="button">Подготовить проект резюме</button>
+<label>Резюме для подтверждения <textarea id="memory-summary-content" rows="5" maxlength="4096"></textarea></label>
+<label>Ключ резюме <input id="memory-summary-key" maxlength="96" value="my-summary"></label>
+<button id="memory-summary-approve" type="button">Подтвердить и сохранить резюме</button>
+<button id="memory-summary-list" type="button">Посмотреть сохранённые резюме</button>
+</fieldset>
+<pre id="memory-output" role="status" aria-live="polite"></pre>
+</section>
+
 <section aria-live="polite"><h2>Состояние</h2><p id="status" data-rt1-ready="false">Не подключено</p></section>
 </main>
 </body>

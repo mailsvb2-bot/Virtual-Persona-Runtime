@@ -1,4 +1,5 @@
 mod evidence;
+mod memory_port;
 mod owner_capture;
 mod owner_context;
 mod persona_file_io;
@@ -19,6 +20,7 @@ mod voice_profile;
 #[cfg(windows)]
 mod windows_secure_store;
 
+pub use memory_port::MemoryContextPort;
 pub use evidence::{
     LabAvSyncDiagnosticInput, LabAvSyncEvidenceInput, LabAvSyncReference, LabAvSyncTrackIssue,
     LabEvidenceError, LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionEvidenceRecorder,

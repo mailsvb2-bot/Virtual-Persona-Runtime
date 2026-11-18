@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+vpr-rt1-text-memory-postgres = { path = "../../staging/rt1-memory-postgres" }
 fs2 = "0.4"
 getrandom = "0.3"
 parking_lot = "0.12"

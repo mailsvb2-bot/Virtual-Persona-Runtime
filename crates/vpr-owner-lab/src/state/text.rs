@@ -101,7 +101,9 @@ impl OwnerLabEngine {
         let turn = self.new_turn()?;
         let evidence_turn_sequence = self.turn_counter;
         register_interrupt(turn.interrupt_handle());
-        let instructions = self.conversation_instructions()?;
+        let instructions = self.memory_instructions(input)?;
+        let user_input = self.memory_user_input(input)?;
+        let _memory_egress = self.memory_provider_guard()?;
         let llm = self.llm.as_ref().ok_or(LabError::InvalidState)?;
         let llm_usage = turn
             .execute_llm(
@@ -109,7 +111,7 @@ impl OwnerLabEngine {
                 &LlmRequest {
                     locale: "ru-RU".to_owned(),
                     instructions: Some(instructions),
-                    user_input: input.to_owned(),
+                    user_input: user_input,
                 },
                 &mut generated,
             )
@@ -131,6 +133,7 @@ impl OwnerLabEngine {
             .take_delivered()
             .map_err(|error| terminalize_failed_turn(&turn, error))?;
         turn.complete().map_err(LabError::Runtime)?;
+        self.memory_after_success(input, evidence_turn_sequence);
         Ok(LabTextResult {
             reply,
             locale: "ru-RU".to_owned(),

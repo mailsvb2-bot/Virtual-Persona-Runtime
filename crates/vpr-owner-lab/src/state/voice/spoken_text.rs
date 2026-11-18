@@ -35,10 +35,12 @@ impl OwnerLabEngine {
         let turn = Arc::new(self.new_turn()?);
         let evidence_turn_sequence = self.turn_counter;
         register_interrupt(turn.interrupt_handle());
+        let user_input = self.memory_user_input(input)?;
+        let _memory_egress = self.memory_provider_guard()?;
         let request = LlmRequest {
             locale: "ru-RU".to_owned(),
-            instructions: Some(self.conversation_instructions()?),
-            user_input: input.to_owned(),
+            instructions: Some(self.memory_instructions(input)?),
+            user_input: user_input,
         };
         let llm = self.llm.as_ref().ok_or(LabError::InvalidState)?;
         let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
@@ -56,6 +58,7 @@ impl OwnerLabEngine {
             .copied()
             .ok_or_else(|| terminalize_failed_turn(&turn, LabError::InvalidInput))?;
         turn.complete().map_err(LabError::Runtime)?;
+        self.memory_after_success(input, evidence_turn_sequence);
         Ok(super::super::text::LabTextResult {
             reply: generation.reply,
             locale: "ru-RU".to_owned(),

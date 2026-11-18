@@ -16,6 +16,7 @@ members = [
   "crates/vpr-provider-did-agent-streams",
   "crates/vpr-provider-local-open-source",
   "crates/vpr-owner-lab",
+  "staging/rt1-memory-postgres",
   "crates/vpr-rt0-smoke",
   "crates/vpr-evaluation",
   "crates/vpr-live-proof",
