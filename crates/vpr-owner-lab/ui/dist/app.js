@@ -100,8 +100,6 @@ let workflowObservedPersonaVersion = null;
 const renderOwnerWorkflow = () => {
     const backend = sessionState.backend;
     const reviewed = ownerCaptureReviewed;
-    // Navigation is a projection of the server-enabled LOCAL route, never a
-    // browser-controlled permission to publish or reach external visitors.
     const rt1EntryVisible = rt1LocalExperimentEnabled && reviewed;
     rt1LocalEntry.hidden = !rt1EntryVisible;
     rt1LocalEntryHint.hidden = !rt1EntryVisible;
