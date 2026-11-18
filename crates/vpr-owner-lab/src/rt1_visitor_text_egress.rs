@@ -1,7 +1,7 @@
 //! Canonical RT1 visitor LLM dispatch under the shared publication gate.
 //! No separate LLM runtime, provider adapter or owner identity is created.
 use super::{Arc, Ordering, Rt1VisitorConversation};
-use crate::state::LabTextResult;
+use crate::state::{LabError, LabTextResult};
 
 impl Rt1VisitorConversation {
     /// # Errors
@@ -25,12 +25,20 @@ impl Rt1VisitorConversation {
         let result = self
             .engine
             .lock()
-            .text_turn(text, move |handle| {
+            .text_voice_turn_streaming(text, move |handle| {
                 *callback.turn.lock() = Some(handle.clone());
                 // A pause between publication admission and runtime turn
                 // registration must cancel the new turn before provider dispatch.
                 if callback.cancelled.load(Ordering::Acquire) {
                     let _ = handle.interrupt();
+                }
+            }, |segment| {
+                // The verified worker already receives synthesized PCM via the
+                // canonical avatar provider. Never enqueue browser speak commands.
+                if segment.client_command.is_some() {
+                    Err(LabError::InvalidState)
+                } else {
+                    Ok(())
                 }
             })
             .map_err(|error| error.code().to_owned());
