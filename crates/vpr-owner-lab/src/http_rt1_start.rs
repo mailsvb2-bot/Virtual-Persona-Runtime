@@ -218,9 +218,11 @@ pub(super) fn visitor_start(
                 "session_id": session_id,
                 "signal": bundle,
                 "voice_enabled": voice_enabled,
-                // A verified worker is real media, never diagnostic RTP. The browser
-                // uses this flag to decide whether to forward ICE candidates.
-                "diagnostic_rtp": !verified_worker::selected() && std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
+                // The existing aiortc operation worker performs non-trickle ICE:
+                // candidates are embedded in SDP, and its separate ICE endpoint
+                // is intentionally denied. Preserve the browser's non-trickle
+                // signaling mode for both worker and diagnostic RTP paths.
+                "diagnostic_rtp": verified_worker::selected() || std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
             }),
         ),
         conversation,
