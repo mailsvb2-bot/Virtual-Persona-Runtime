@@ -23,7 +23,7 @@ import {
   type SessionAudience,
 } from "./session-runtime-state.js";
 
-type Bootstrap = { csrf_token: string; egress_enabled: boolean; rt0_evidence_mode: boolean };
+type Bootstrap = { csrf_token: string; egress_enabled: boolean; rt0_evidence_mode: boolean; rt1_local_experiment_enabled?: boolean };
 type TextResult = { reply: string; locale: string; evidence_turn_sequence: number; first_meaningful_response_millis: number; total_millis: number };
 type ClientRoute =
   | { kind: "web_rtc_data_channel"; label: string }
@@ -290,6 +290,9 @@ let ownerCaptureReviewed = false;
 const workflowState = byId<HTMLElement>("workflow-state");
 const workflowNext = byId<HTMLButtonElement>("workflow-next");
 const workflowNextHint = byId<HTMLElement>("workflow-next-hint");
+const rt1LocalEntry = byId<HTMLAnchorElement>("rt1-local-entry");
+const rt1LocalEntryHint = byId<HTMLElement>("rt1-local-entry-hint");
+let rt1LocalExperimentEnabled = false;
 const workflowSteps = ["workflow-create", "workflow-prepare", "workflow-preview", "workflow-revoke"]
   .map((id) => byId<HTMLElement>(id));
 let workflowBackendKnown = false;
@@ -302,6 +305,11 @@ let workflowObservedPersonaVersion: number | null = null;
 const renderOwnerWorkflow = (): void => {
   const backend = sessionState.backend;
   const reviewed = ownerCaptureReviewed;
+  // Navigation is a projection of the server-enabled LOCAL route, never a
+  // browser-controlled permission to publish or reach external visitors.
+  const rt1EntryVisible = rt1LocalExperimentEnabled && reviewed;
+  rt1LocalEntry.hidden = !rt1EntryVisible;
+  rt1LocalEntryHint.hidden = !rt1EntryVisible;
   const session = backend.session_state;
   const active = session === "active";
   if (workflowObservedPersonaVersion !== backend.persona_version) {
@@ -3301,6 +3309,7 @@ void api<Bootstrap>("/api/bootstrap")
     publishBootstrap(csrfToken);
     egressEnabled = bootstrap.egress_enabled;
     rt0EvidenceMode = bootstrap.rt0_evidence_mode === true;
+    rt1LocalExperimentEnabled = bootstrap.rt1_local_experiment_enabled === true;
     await syncStatus();
     ownerCaptureReviewed = sessionState.backend.owner_context_state === "reviewed";
     if (sessionState.backend.session_audience) audienceSelect.value = sessionState.backend.session_audience;
