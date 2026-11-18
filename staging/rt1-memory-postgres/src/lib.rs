@@ -645,7 +645,12 @@ fn hex_sha256(s: &str) -> String {
         .map(|b| format!("{b:02x}"))
         .collect()
 }
-fn db(_: postgres::Error) -> MemoryError {
+fn db(error: postgres::Error) -> MemoryError {
+    // Test-run-only SQLSTATE diagnostics. No SQL parameters or visitor content.
+    if std::env::var("VPR_TEST_MEMORY_DIAGNOSTICS").as_deref() == Ok("1") {
+        let state = error.code().map_or("none", |code| code.code());
+        eprintln!("VPR_TEST_DB_ERROR state={state} message={error}");
+    }
     MemoryError::Unavailable
 }
 /// Build a bounded data-only context. The caller combines it with canonical instructions,

@@ -43,10 +43,8 @@ impl TextMemory {
             .collect();
         drop(c);
         let mut count = 0;
-        for maybe in principals {
-            if let Ok(principal) = maybe {
-                count += self.drain_scope_outbox(&principal, 8)?;
-            }
+        for principal in principals.into_iter().flatten() {
+            count += self.drain_scope_outbox(&principal, 8)?;
         }
         Ok(count)
     }

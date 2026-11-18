@@ -41,6 +41,7 @@ jobs:
       - name: Real SQL migrations, consent, revocation, outbox
         env:
           SSL_CERT_FILE: /tmp/vpr-pg-ci/server.crt
+          VPR_TEST_MEMORY_DIAGNOSTICS: '1'
           VPR_TEST_POSTGRES_DSN: "host=localhost port=65433 user=vprmemtest dbname=vprmemtest sslmode=require"
         run: cargo test --locked -p vpr-rt1-text-memory-postgres -- --test-threads=1 --include-ignored
       - name: Preserve research-only deployment gates

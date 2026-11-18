@@ -73,6 +73,9 @@ impl MemoryCache {
     pub fn len(&self) -> usize {
         self.inner.lock().map_or(0, |g| g.map.len())
     }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 #[cfg(test)]
 mod tests {

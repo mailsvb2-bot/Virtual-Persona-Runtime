@@ -82,7 +82,7 @@ impl TextMemory {
             &[&p.workspace_id,&p.visitor_id,&p.persona_id,&key]).map_err(db)?;
         let previous = old.as_ref().map(|r| r.get::<_, String>(0));
         let revision = old.as_ref().map_or(1, |r| r.get::<_, i64>(1) + 1);
-        let hash = hex_sha256(&format!("{}:{}:{}", key, content, days));
+        let hash = hex_sha256(&format!("{key}:{content}:{days}"));
         let receipt=tx.query_opt("SELECT operation_type,fact_key,content_hash FROM vpr_memory.operation_receipts WHERE workspace_id=$1 AND visitor_id=$2 AND persona_id=$3 AND operation_id=$4",
             &[&p.workspace_id,&p.visitor_id,&p.persona_id,&operation_id]).map_err(db)?;
         if let Some(row) = receipt {
