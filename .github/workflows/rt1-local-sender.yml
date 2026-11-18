@@ -21,6 +21,7 @@ on:
       - 'crates/vpr-owner-lab/src/main.rs'
       - 'crates/vpr-runtime/src/cancellable_tcp_writer.rs'
       - 'crates/vpr-provider-local-open-source/src/operation_client.rs'
+      - 'tests/architecture/test_rt1_browser_action_routes.py'
       - '.github/workflows/rt1-local-sender.yml'
   workflow_dispatch:
 
