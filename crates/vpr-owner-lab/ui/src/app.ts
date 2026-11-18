@@ -2619,20 +2619,21 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     const scheduleSegmentDelivery = (segment: VoiceSegment): void => {
       if (deliveryGeneration !== voiceDeliveryGeneration) return;
       const command = segment.client_command;
-      // Server-owned speech has no browser playback command or completion
-      // receipt. Only browser-dispatched output increments the pending count.
-      if (!command) {
-        // Still unmute the authorized current generation for provider audio.
-        if (deliveryGeneration === voiceDeliveryGeneration) setLocalAudioMuted(false);
-        serverDeliveredSpeechObserved = true;
-        return;
-      }
+      // Both browser-dispatched and server-owned output expect an authoritative
+      // provider playback_done receipt. This is expectation accounting, never
+      // a fabricated browser delivery or completion acknowledgement.
       const voiceForSegment = activeVoiceEvidence;
       if (voiceForSegment?.requestSequence === requestSequence) {
         voiceForSegment.providerPlaybackExpectedCount += 1;
         providerPlaybackInFlight = true;
         syncRt0PlaybackPending(voiceForSegment);
         updateControls();
+      }
+      if (!command) {
+        // Server-owned Echo is already dispatched; do not send a second command.
+        if (deliveryGeneration === voiceDeliveryGeneration) setLocalAudioMuted(false);
+        serverDeliveredSpeechObserved = true;
+        return;
       }
       // A new authorized output may be heard only after the preceding turn's
       // provider STOP returned. Never unmute a stale cancelled generation.
