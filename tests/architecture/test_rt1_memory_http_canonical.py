@@ -15,7 +15,7 @@ class CanonicalMemoryWrites(unittest.TestCase):
         start = source.index('"/api/rt1/visitor/memory/remember" => {')
         end = source.index('"/api/rt1/visitor/memory/contradictions" => {', start)
         route = source[start:end]
-        self.assertRegex(route, r'db\\s*\\.remember_reviewed\\(principal, id, key, content, 365\\)')
+        self.assertRegex(route, r'db\s*\.remember_reviewed\(principal, id, key, content, 365\)')
         self.assertIn('ConsolidationResult::Corrected', route)
         self.assertIn('ConsolidationResult::Unchanged', route)
         self.assertNotRegex(route, r'\bdb\.remember\(')
