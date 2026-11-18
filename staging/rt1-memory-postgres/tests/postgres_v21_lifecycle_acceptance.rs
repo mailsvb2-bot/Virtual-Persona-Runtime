@@ -71,7 +71,7 @@ fn visitor_consent_restart_correct_forget_and_revoke() {
     assert!(
         matches!(
             reopened.validate_revision(&same_visitor, prepared.consent_revision),
-            Err(MemoryError::Conflict)
+            Err(MemoryError::NotConsented)
         ),
         "previously prepared private context cannot be sent after correction"
     );
