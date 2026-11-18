@@ -272,4 +272,3 @@ fn visitor_typed_question_never_generates_silent_text_only_fallback() {
     assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
     assert_eq!(stats.avatar_pcm.load(Ordering::SeqCst), 0);
 }
-
