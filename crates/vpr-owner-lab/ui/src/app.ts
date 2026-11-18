@@ -2618,6 +2618,10 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     let serverDeliveredSpeechObserved = false;
     const scheduleSegmentDelivery = (segment: VoiceSegment): void => {
       if (deliveryGeneration !== voiceDeliveryGeneration) return;
+      const command = segment.client_command;
+      // Both browser-dispatched and server-owned output expect an authoritative
+      // provider playback_done receipt. This is expectation accounting, never
+      // a fabricated browser delivery or completion acknowledgement.
       const voiceForSegment = activeVoiceEvidence;
       if (voiceForSegment?.requestSequence === requestSequence) {
         voiceForSegment.providerPlaybackExpectedCount += 1;
@@ -2625,16 +2629,15 @@ const finishMicrophoneTurn = async (): Promise<void> => {
         syncRt0PlaybackPending(voiceForSegment);
         updateControls();
       }
-      const command = segment.client_command;
-      // A new authorized output may be heard only after the preceding turn's
-      // provider STOP returned. Never unmute a stale cancelled generation.
-      if (deliveryGeneration === voiceDeliveryGeneration) setLocalAudioMuted(false);
       if (!command) {
-        // Server-owned delivery has already passed the canonical provider
-        // boundary and recorded Sent; there is no browser command to publish.
+        // Server-owned Echo is already dispatched; do not send a second command.
+        if (deliveryGeneration === voiceDeliveryGeneration) setLocalAudioMuted(false);
         serverDeliveredSpeechObserved = true;
         return;
       }
+      // A new authorized output may be heard only after the preceding turn's
+      // provider STOP returned. Never unmute a stale cancelled generation.
+      if (deliveryGeneration === voiceDeliveryGeneration) setLocalAudioMuted(false);
       let commandSent = false;
       const nativeLiveKitQueue = command.route.kind === "live_kit_text_topic";
       const dispatch: Promise<boolean> = nativeLiveKitQueue
