@@ -1,6 +1,9 @@
 //! Typed visitor questions reuse the *same* canonical LLM streaming,
 //! TTS, avatar PCM and evidence path as microphone turns. No second runtime.
-use super::*;
+use super::{
+    Arc, Instant, LabError, LabVoiceSegment, LlmRequest, OwnerLabEngine, TurnInterruptHandle,
+    elapsed_millis, map_usage, terminalize_failed_turn,
+};
 
 impl OwnerLabEngine {
     /// Run a typed visitor question through the SAME streaming LLM -> TTS ->
