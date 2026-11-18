@@ -547,9 +547,12 @@
     textInFlight = true;
     const controller = new AbortController();
     textController = controller;
-    const timeout = setTimeout(() => controller.abort(), 20000);
+    // This request now carries canonical LLM -> TTS/PCM delivery, not just a
+    // buffered text completion. Stay below the server's 90s response fence.
+    const timeout = setTimeout(() => controller.abort(), 85_000);
     el("send-text").disabled = true;
     el("speak").disabled = true;
+    message("Persona формирует и озвучивает ответ…");
     el("interrupt").disabled = !sessionId || stopping || microphonePending;
     try {
       const result = await api("/api/rt1/visitor/text", { session_id: id, text }, controller.signal);
