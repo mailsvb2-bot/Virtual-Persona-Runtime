@@ -48,6 +48,17 @@ separately; a PR alone is not evidence of completion.
 - Install a reproducible, pinned **GPU-specific** Python/CUDA/Whisper/VAE/MuseTalk
   environment in an isolated build image. Do not treat CPU CI or a dependency
   list as a CUDA compatibility certificate.
+- The repository currently has no committed GPU Dockerfile, transitive wheel
+  lock/approved wheel hashes, or validated clean-room GPU installation image.
+  The documented pinned direct versions are an installation *candidate* only.
+  This is an open reproducible-deployment requirement, not a user configuration
+  task that can safely be postponed until after paying for permanent hosting.
+- Owner's R0 functional demonstration was accepted on candidate
+  `c393bae4cb369c82ef3f9160b9ba5fc6dc2d5774`, but
+  `docs/release-evidence/rt0/OWNER_FUNCTIONAL_ACCEPTANCE.md` explicitly
+  excludes the formal RT0 exit gate. Strict uninterrupted playback/A-V sync,
+  human review, Golden Set, latency/cost and exact candidate inventory remain
+  outstanding; do not reclassify the demonstration as a release qualification.
 - Complete full-source-to-browser owner/visitor E2E with provider credentials
   in an approved non-production environment; track external failures separately.
 - Verify exact-HEAD Rust tests, Windows credentials, browser E2E, RT1 sender
