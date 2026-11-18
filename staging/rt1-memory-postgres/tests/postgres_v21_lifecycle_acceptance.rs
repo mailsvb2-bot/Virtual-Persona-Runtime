@@ -27,10 +27,15 @@ fn visitor_consent_restart_correct_forget_and_revoke() {
         .expect("issue personal visitor credential");
     let principal = first.authenticate(&credential.token).expect("authenticate");
     assert!(
-        matches!(first.recall(&principal, "", 8), Err(MemoryError::NotConsented)),
+        matches!(
+            first.recall(&principal, "", 8),
+            Err(MemoryError::NotConsented)
+        ),
         "enrollment alone must never authorize memory reads"
     );
-    first.set_consent(&principal, true).expect("explicit consent");
+    first
+        .set_consent(&principal, true)
+        .expect("explicit consent");
     first
         .remember(
             &principal,
@@ -89,13 +94,23 @@ fn visitor_consent_restart_correct_forget_and_revoke() {
         .expect("fresh no-memory turn");
     assert!(!after_forget.input.contains("Люблю чёрный кофе"));
 
-    reopened.set_consent(&same_visitor, false).expect("disable consent");
+    reopened
+        .set_consent(&same_visitor, false)
+        .expect("disable consent");
     assert!(matches!(
         reopened.validate_revision(&same_visitor, after_forget.consent_revision),
         Err(MemoryError::NotConsented)
     ));
-    reopened.set_consent(&same_visitor, true).expect("renew consent");
-    assert!(reopened.recall(&same_visitor, "", 8).expect("empty recall").facts.is_empty());
+    reopened
+        .set_consent(&same_visitor, true)
+        .expect("renew consent");
+    assert!(
+        reopened
+            .recall(&same_visitor, "", 8)
+            .expect("empty recall")
+            .facts
+            .is_empty()
+    );
     reopened
         .revoke_credential(&credential.token)
         .expect("revoke personal key");
@@ -114,8 +129,14 @@ fn stop_blocks_future_egress_even_if_provider_lease_is_in_flight() {
         .join()
         .expect("STOP thread");
     assert_eq!(result, StopResult::StillInFlight);
-    assert!(fence.admit_owned(3).is_none(), "STOP must block new egress immediately");
+    assert!(
+        fence.admit_owned(3).is_none(),
+        "STOP must block new egress immediately"
+    );
     drop(in_flight);
     assert_eq!(fence.revoke(Duration::from_millis(40)), StopResult::Drained);
-    assert!(fence.admit_owned(4).is_none(), "revocation must remain permanent");
+    assert!(
+        fence.admit_owned(4).is_none(),
+        "revocation must remain permanent"
+    );
 }
