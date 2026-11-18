@@ -386,7 +386,7 @@ fn handle_privacy_action(
                     ))
                 } else {
                     Err(error_response(502, "RT1_MEMORY_REMOTE_STOP_UNCONFIRMED"))
-                ;;
+                };
             }
             let revision = db.set_consent(principal, true).map_err(denied)?;
             conversation
