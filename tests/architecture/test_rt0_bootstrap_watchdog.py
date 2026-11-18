@@ -8,38 +8,29 @@ SERVER = ROOT / "crates/vpr-owner-lab/src/main.rs"
 SCRIPT = ROOT / "crates/vpr-owner-lab/ui/bootstrap-watchdog.js"
 
 class BootstrapWatchdogSafety(unittest.TestCase):
-    def test_watchdog_loads_asynchronously_and_does_not_block_app(self):
+    def test_watchdog_registers_before_the_canonical_module(self):
         html = HTML.read_text(encoding="utf-8")
-        self.assertIn('<script async src="/bootstrap-watchdog.js"></script>', html)
-        self.assertNotIn('<script defer src="/bootstrap-watchdog.js"></script>', html)
-        self.assertIn('<script type="module" src="/app.js"></script>', html)
+        watchdog = '<script defer src="/bootstrap-watchdog.js"></script>'
+        entry = '<script type="module" src="/app.js"></script>'
+        self.assertEqual(html.count(watchdog), 1)
+        self.assertNotIn('<script async src="/bootstrap-watchdog.js"></script>', html)
+        self.assertEqual(html.count(entry), 1)
+        self.assertLess(html.index(watchdog), html.index(entry))
         self.assertIn('id="connect" class="primary" disabled', html)
-    def test_critical_owner_modules_are_preloaded_before_browser_body(self):
+
+    def test_bootstrap_does_not_speculatively_preload_entire_module_graph(self):
         html = HTML.read_text(encoding="utf-8")
         server = SERVER.read_text(encoding="utf-8")
-        # All eager modules must be fetched early; the original pair only
-        # moved the bottleneck to /tts-selector.js and /evidence-export.js.
-        initial_modules = (
-            "app.js", "bootstrap-context.js", "evidence-export.js",
-            "interrupted-answer.js", "owner-capture.js",
-            "provider-event-fence.js", "voice-command-scheduler.js",
-            "media-runtime.js", "session-runtime-state.js",
-            "tts-selector.js", "reference-capture.js",
-        )
-        for module in initial_modules:
-            preload = f'<link rel="modulepreload" href="/{module}">'
-            self.assertEqual(html.count(preload), 1, module)
-            self.assertLess(html.index(preload), html.index("</head>"))
-            self.assertIn(f'"/{module}" => static_response(', server)
-            self.assertNotIn(f'<script async src="/{module}">', html)
-        self.assertEqual(html.count('rel="modulepreload"'), len(initial_modules))
-        # Keep heavyweight/on-demand media outside initial loading.
-        self.assertNotIn('rel="modulepreload" href="/mic-worklet.js"', html)
-        self.assertNotIn('rel="modulepreload" href="/vendor/livekit-client.umd.js"', html)
-        # A preload is only a fetch; never add a second application runtime.
+        # The canonical entry owns its imports. Do not regress to speculative
+        # modulepreload requests that starve the bounded local listener.
+        self.assertNotIn('rel="modulepreload"', html)
         self.assertEqual(html.count('<script type="module" src="/app.js"></script>'), 1)
-        self.assertEqual(html.count('<script type="module" src="/tts-selector.js"></script>'), 1)
         self.assertEqual(html.count('<script type="module" src="/evidence-export.js"></script>'), 1)
+        self.assertNotIn('<script type="module" src="/tts-selector.js"></script>', html)
+        for path in ("/app.js", "/bootstrap-watchdog.js", "/evidence-export.js"):
+            self.assertIn(f'"{path}" => static_response(', server)
+        self.assertNotIn('<script async src="/mic-worklet.js">', html)
+        self.assertNotIn('<script async src="/vendor/livekit-client.umd.js">', html)
 
     def test_recovery_uses_static_local_code_only(self):
         server = SERVER.read_text(encoding="utf-8")
