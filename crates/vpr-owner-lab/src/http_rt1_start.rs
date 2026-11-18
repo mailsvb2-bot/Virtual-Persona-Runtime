@@ -89,6 +89,27 @@ pub(super) fn publication_voice_provider_ready() -> Result<(), &'static str> {
     remote.publication_ready()
 }
 
+// This is only a capability binding on the existing engine. No new
+// session, provider or HTTP router is created by the PostgreSQL extension.
+fn bind_optional_memory_on_start(
+    engine: &mut vpr_owner_lab::OwnerLabEngine,
+    token: Option<&str>,
+) -> Result<(), HttpResponse> {
+    #[cfg(not(feature = "rt1-memory-postgres"))]
+    {
+        let _ = engine;
+        if token.is_some() {
+            return Err(error_response(503, "RT1_MEMORY_DISABLED"));
+        }
+    }
+    #[cfg(feature = "rt1-memory-postgres")]
+    if let Some(memory_token) = token {
+        super::memory::bind_on_start(engine, memory_token)
+            .map_err(|_| error_response(403, "RT1_MEMORY_BIND_DENIED"))?;
+    }
+    Ok(())
+}
+
 pub(super) fn visitor_start(
     request: &mut tiny_http::Request,
     state: &AppState,
@@ -104,15 +125,7 @@ pub(super) fn visitor_start(
     if !matches!(restore_reviewed_persona(&mut engine), Ok(true)) {
         return Err(error_response(409, "RT1_PERSONA_NOT_REVIEWED"));
     }
-    #[cfg(not(feature = "rt1-memory-postgres"))]
-    if body.memory_token.is_some() {
-        return Err(error_response(503, "RT1_MEMORY_DISABLED"));
-    }
-    #[cfg(feature = "rt1-memory-postgres")]
-    if let Some(memory_token) = body.memory_token.as_deref() {
-        super::memory::bind_on_start(&mut engine, memory_token)
-            .map_err(|_| error_response(403, "RT1_MEMORY_BIND_DENIED"))?;
-    }
+    bind_optional_memory_on_start(&mut engine, body.memory_token.as_deref())?;
     let manager = Rt1OwnerController::new().visitor_sessions();
     let started = if let Some(worker) = worker {
         let retry_id = session_id.clone();
