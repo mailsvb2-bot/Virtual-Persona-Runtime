@@ -213,7 +213,7 @@
       // A concurrent owner action must not re-enable capture while a voice turn is pending.
       el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight || microphonePending || textDeliveryUncertain;
       el("interrupt").disabled = !sessionId || stopping || pageHidden || (!voiceEnabled && !textInFlight) || microphonePending;
-      el("send-text").disabled = !sessionId || stopping || pageHidden || textInFlight;
+      el("send-text").disabled = !sessionId || stopping || pageHidden || textInFlight || voiceInFlight || textDeliveryUncertain;
     }
   }
 
@@ -497,8 +497,8 @@
       }
     } finally {
       voiceInFlight = false;
-      el("speak").disabled = !sessionId || stopping || !voiceEnabled || textInFlight;
-      el("send-text").disabled = !sessionId || stopping || pageHidden || textInFlight || microphonePending || Boolean(microphone);
+      el("speak").disabled = !sessionId || stopping || !voiceEnabled || textInFlight || textDeliveryUncertain;
+      el("send-text").disabled = !sessionId || stopping || pageHidden || textInFlight || microphonePending || Boolean(microphone) || textDeliveryUncertain;
     }
   }
 
@@ -794,6 +794,8 @@
         }
       }, 2000);
       assertCurrent();
+      // A fresh verified session, not a timed-out request, resets the fence.
+      textDeliveryUncertain = false;
       voiceEnabled = advertisedVoice;
       el("speak").disabled = !voiceEnabled || voiceInFlight || microphonePending || textDeliveryUncertain;
       el("interrupt").disabled = !voiceEnabled;
