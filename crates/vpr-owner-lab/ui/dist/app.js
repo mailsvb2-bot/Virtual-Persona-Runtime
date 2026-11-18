@@ -88,6 +88,9 @@ let ownerCaptureReviewed = false;
 const workflowState = byId("workflow-state");
 const workflowNext = byId("workflow-next");
 const workflowNextHint = byId("workflow-next-hint");
+const rt1LocalEntry = byId("rt1-local-entry");
+const rt1LocalEntryHint = byId("rt1-local-entry-hint");
+let rt1LocalExperimentEnabled = false;
 const workflowSteps = ["workflow-create", "workflow-prepare", "workflow-preview", "workflow-revoke"]
     .map((id) => byId(id));
 let workflowBackendKnown = false;
@@ -97,6 +100,11 @@ let workflowObservedPersonaVersion = null;
 const renderOwnerWorkflow = () => {
     const backend = sessionState.backend;
     const reviewed = ownerCaptureReviewed;
+    // Navigation is a projection of the server-enabled LOCAL route, never a
+    // browser-controlled permission to publish or reach external visitors.
+    const rt1EntryVisible = rt1LocalExperimentEnabled && reviewed;
+    rt1LocalEntry.hidden = !rt1EntryVisible;
+    rt1LocalEntryHint.hidden = !rt1EntryVisible;
     const session = backend.session_state;
     const active = session === "active";
     if (workflowObservedPersonaVersion !== backend.persona_version) {
@@ -2741,6 +2749,7 @@ void api("/api/bootstrap")
     publishBootstrap(csrfToken);
     egressEnabled = bootstrap.egress_enabled;
     rt0EvidenceMode = bootstrap.rt0_evidence_mode === true;
+    rt1LocalExperimentEnabled = bootstrap.rt1_local_experiment_enabled === true;
     await syncStatus();
     ownerCaptureReviewed = sessionState.backend.owner_context_state === "reviewed";
     if (sessionState.backend.session_audience)
