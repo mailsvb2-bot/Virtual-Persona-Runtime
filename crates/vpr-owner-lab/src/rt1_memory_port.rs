@@ -31,13 +31,13 @@ impl VisitorMemoryPort {
             .map_err(|_| error_response(503, "RT1_MEMORY_ENTROPY_UNAVAILABLE"))?;
         let egress = egress_for_token(token)?;
         Ok(Self {
-            db: Arc::clone(&db),
+            db: Arc::clone(db),
             principal,
             token: token.to_owned(),
             nonce: hex_bytes(&bytes),
             last_save: Mutex::new(None),
             egress: Arc::clone(&egress),
-            orchestrator: MemoryOrchestrator::with_fence(Arc::clone(&db), Arc::clone(&egress)),
+            orchestrator: MemoryOrchestrator::with_fence(Arc::clone(db), Arc::clone(&egress)),
             prepared: Mutex::new(None),
         })
     }

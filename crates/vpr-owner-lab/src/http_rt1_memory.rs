@@ -248,7 +248,7 @@ fn handle_note_action(
         }
         "/api/rt1/visitor/memory/list" => {
             let facts = db
-                .list_facts(&principal, body.cursor.as_deref(), 50)
+                .list_facts(principal, body.cursor.as_deref(), 50)
                 .map_err(denied)?;
             let next_cursor = if facts.len() == 50 {
                 facts.last().map(|fact| fact.key.clone())
@@ -271,7 +271,7 @@ fn handle_note_action(
                 .as_deref()
                 .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
             db.remember(
-                &principal,
+                principal,
                 id,
                 key,
                 content,
@@ -287,7 +287,7 @@ fn handle_note_action(
                 .as_deref()
                 .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
             let matches = db
-                .possible_contradictions(&principal, content)
+                .possible_contradictions(principal, content)
                 .map_err(denied)?;
             serde_json::json!({"candidates":matches,"automatic_overwrite":false})
         }
@@ -296,7 +296,7 @@ fn handle_note_action(
                 .key
                 .as_deref()
                 .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
-            db.set_validity(&principal, key, body.valid_from, body.valid_until)
+            db.set_validity(principal, key, body.valid_from, body.valid_until)
                 .map_err(denied)?;
             serde_json::json!({"ok":true,"validity_updated":true})
         }
@@ -309,7 +309,7 @@ fn handle_note_action(
                 .operation_id
                 .as_deref()
                 .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
-            db.forget(&principal, id, key).map_err(denied)?;
+            db.forget(principal, id, key).map_err(denied)?;
             serde_json::json!({"ok":true,"forgotten":true})
         }
         _ => return Err(error_response(404, "RT1_MEMORY_ROUTE_NOT_FOUND")),
@@ -324,7 +324,7 @@ fn handle_summary_action(
     let (db, principal, body) = (ctx.db, ctx.principal, ctx.body);
     let result = match path {
         "/api/rt1/visitor/memory/summary/draft" => {
-            let (text, source_digest) = db.draft_fact_summary(&principal).map_err(denied)?;
+            let (text, source_digest) = db.draft_fact_summary(principal).map_err(denied)?;
             serde_json::json!({"text":text,"source_digest":source_digest,"approved":false})
         }
         "/api/rt1/visitor/memory/summary/approve" => {
@@ -343,16 +343,16 @@ fn handle_summary_action(
             // Verify candidate still describes current facts. The user must
             // explicitly approve the draft after inspecting it.
             let (_current_text, current_digest) =
-                db.draft_fact_summary(&principal).map_err(denied)?;
+                db.draft_fact_summary(principal).map_err(denied)?;
             if digest != current_digest {
                 return Err(error_response(409, "RT1_MEMORY_SUMMARY_STALE"));
             }
-            db.save_approved_summary(&principal, key, content, digest)
+            db.save_approved_summary(principal, key, content, digest)
                 .map_err(denied)?;
             serde_json::json!({"ok":true,"approved":true})
         }
         "/api/rt1/visitor/memory/summary/list" => {
-            let summaries = db.list_summaries(&principal).map_err(denied)?;
+            let summaries = db.list_summaries(principal).map_err(denied)?;
             serde_json::json!({"summaries":summaries})
         }
         _ => return Err(error_response(404, "RT1_MEMORY_ROUTE_NOT_FOUND")),
@@ -374,7 +374,7 @@ fn handle_privacy_action(
                 .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
             if !enabled {
                 let stopped = stop_bound_memory_sessions(state, token);
-                let revision = db.set_consent(&principal, false).map_err(denied)?;
+                let revision = db.set_consent(principal, false).map_err(denied)?;
                 return if stopped {
                     Ok((
                         json_response(
@@ -386,9 +386,9 @@ fn handle_privacy_action(
                     ))
                 } else {
                     Err(error_response(502, "RT1_MEMORY_REMOTE_STOP_UNCONFIRMED"))
-                };
+                ;;
             }
-            let revision = db.set_consent(&principal, true).map_err(denied)?;
+            let revision = db.set_consent(principal, true).map_err(denied)?;
             conversation
                 .authorize_memory_action()
                 .map_err(|_| error_response(409, "RT1_VISITOR_REVOKED"))?;
@@ -402,8 +402,8 @@ fn handle_privacy_action(
         }
         "/api/rt1/visitor/memory/erase" => {
             let stopped = stop_bound_memory_sessions(state, token);
-            db.erase_visitor(&principal).map_err(denied)?;
-            return if stopped {
+            db.erase_visitor(principal).map_err(denied)?;
+            if stopped {
                 Ok((
                     json_response(
                         200,
@@ -414,7 +414,7 @@ fn handle_privacy_action(
                 ))
             } else {
                 Err(error_response(502, "RT1_MEMORY_REMOTE_STOP_UNCONFIRMED"))
-            };
+            }
         }
         "/api/rt1/visitor/memory/rotate" => {
             let stopped = stop_bound_memory_sessions(state, token);
@@ -425,7 +425,7 @@ fn handle_privacy_action(
             // The canonical STOP has revoked this conversation. Return the
             // replacement credential directly: a post-STOP session authorize
             // would fail and irretrievably hide the newly issued secret.
-            return Ok((
+            Ok((
                 json_response(
                     200,
                     &serde_json::json!({
@@ -433,12 +433,12 @@ fn handle_privacy_action(
                     }),
                 ),
                 conversation,
-            ));
+            ))
         }
         "/api/rt1/visitor/memory/revoke" => {
             let stopped = stop_bound_memory_sessions(state, token);
             db.revoke_credential(token).map_err(denied)?;
-            return if stopped {
+            if stopped {
                 Ok((
                     json_response(
                         200,
@@ -449,7 +449,7 @@ fn handle_privacy_action(
                 ))
             } else {
                 Err(error_response(502, "RT1_MEMORY_REMOTE_STOP_UNCONFIRMED"))
-            };
+            }
         }
         _ => Err(error_response(404, "RT1_MEMORY_ROUTE_NOT_FOUND")),
     }
