@@ -112,7 +112,11 @@ async function createOwnerAndInvite(page: Page): Promise<{ owner: string; invite
   await page.getByRole("button", { name: "Подтвердить Persona" }).click();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
 
-  await page.goto("/rt1", { waitUntil: "domcontentloaded" });
+  // Complete the real UI journey: reviewed Persona -> server-enabled RT1
+  // publication, without typing a hidden developer URL into the browser.
+  await expect(page.locator("#rt1-local-entry")).toBeVisible();
+  await page.locator("#rt1-local-entry").click();
+  await expect(page).toHaveURL(/\/rt1$/);
   await expect(page.locator("#status")).toHaveAttribute("data-rt1-ready", "true");
   await page.locator("#provision").click();
   await expect(page.locator("#status")).toContainText("Кабинет создан");
