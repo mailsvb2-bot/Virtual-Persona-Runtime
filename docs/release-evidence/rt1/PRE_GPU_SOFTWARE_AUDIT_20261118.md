@@ -33,6 +33,17 @@ separately; a PR alone is not evidence of completion.
   registration in `ui/rt1.js`; literal RT1 API paths used there are registered
   in `http_rt1.rs`. This is structural wiring evidence, **not** a live journey.
 
+## Product boundary found in code
+
+`ui/rt1.html` explicitly offers a **localhost-only** invitation link and
+says it does not work on another device. `rt1_owner_controller.rs` is a
+shared in-process controller, not an independent production account/public
+publication service. The RT0 Owner Lab provides existing Persona capture and
+review; RT1 is not yet an independently usable end-to-end public product.
+Therefore 12/12 wired RT1 buttons do **not** mean the full RT1 release user
+journey is implemented or authorized. Do not bind a public hostname or
+remove loopback restrictions as a pre-GPU shortcut.
+
 ## P0: mandatory release/real-world evidence (NOT CLOSED)
 
 | Blocker | Canonical location | Required proof |
