@@ -42,6 +42,21 @@ class Rt1BrowserActions(unittest.TestCase):
                 else:
                     self.assertRegex(js, direct)
 
+    def test_aiortc_worker_uses_non_trickle_ice(self):
+        """The canonical worker embeds ICE in SDP and denies trickle requests."""
+        start = (ROOT / "crates/vpr-owner-lab/src/http_rt1_start.rs").read_text(
+            encoding="utf-8"
+        )
+        signaling = (ROOT / "crates/vpr-owner-lab/src/rt1_visitor_signaling.rs").read_text(
+            encoding="utf-8"
+        )
+        js = (UI / "rt1.js").read_text(encoding="utf-8")
+        self.assertIn('"diagnostic_rtp": verified_worker::selected() ||', start)
+        self.assertIn('if (start.diagnostic_rtp === false)', js)
+        self.assertIn('await waitForIceGathering(connection)', js)
+        self.assertIn('if self.remote.is_some() {', signaling)
+        self.assertIn('return Err("RT1_VISITOR_ICE_DENIED".into());', signaling)
+
     def test_browser_api_paths_are_registered_by_single_canonical_router(self):
         js = (UI / "rt1.js").read_text(encoding="utf-8")
         router = ROUTER.read_text(encoding="utf-8")
