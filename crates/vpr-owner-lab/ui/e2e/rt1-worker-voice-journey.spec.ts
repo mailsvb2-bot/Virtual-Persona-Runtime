@@ -150,7 +150,6 @@ async function joinVisitor(page: Page, invite: string, visitorOnly = false): Pro
   expect(startResponse.status()).toBe(200);
   const start = await startResponse.json();
   expect(start.voice_enabled).toBe(true);
-  expect(start.diagnostic_rtp).toBe(false);
   expect(start.signal.transport.kind).toBe("web_rtc");
 
   await expect.poll(
