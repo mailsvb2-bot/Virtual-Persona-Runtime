@@ -126,6 +126,8 @@ local_lab_files = {
     Path("crates/vpr-owner-lab/src/main.rs"),
     Path("crates/vpr-owner-lab/src/http_rt1.rs"),
     Path("crates/vpr-owner-lab/src/http_rt1_transport.rs"),
+    # Explicitly feature-gated localhost-only memory extension. Never a public route.
+    Path("crates/vpr-owner-lab/src/http_rt1_memory.rs"),
     Path("crates/vpr-owner-lab/src/http_proxy.rs"),
     Path("crates/vpr-owner-lab/ui/rt1.js"),
     # Test-only caller of the gated local RT1 route, never shipped as an API surface.
@@ -141,6 +143,22 @@ local_lab_files = {
     # This end-to-end spec calls the local, opt-in worker API; it is not a shipped public API surface.
     Path("crates/vpr-owner-lab/ui/e2e/rt1-worker-owner-visitor-isolation.spec.ts"),
 }
+# The staged PostgreSQL memory routes may only extend the localhost-only RT1
+# experiment under an opt-in Cargo feature; they must never be default-on.
+owner_manifest = (ROOT / "crates/vpr-owner-lab/Cargo.toml").read_text(encoding="utf-8")
+local_memory_route = (ROOT / "crates/vpr-owner-lab/src/http_rt1_memory.rs").read_text(encoding="utf-8")
+local_rt1_source = (ROOT / "crates/vpr-owner-lab/src/http_rt1.rs").read_text(encoding="utf-8")
+if (
+    'default = []' not in owner_manifest
+    or 'rt1-memory-postgres = ["dep:vpr-rt1-text-memory-postgres"]' not in owner_manifest
+    or '#[cfg(feature = "rt1-memory-postgres")]\n#[path = "http_rt1_memory.rs"]\nmod memory;' not in local_rt1_source
+    or '#[cfg(feature = "rt1-memory-postgres")]\n    if let Some(response) = memory::route(path, request, state)' not in local_rt1_source
+    or 'path.starts_with("/api/rt1/visitor/memory/")' not in local_memory_route
+    or 'fn main(' in local_memory_route
+    or 'Server::http(' in local_memory_route
+):
+    raise SystemExit("RT1 memory extension must remain opt-in, routed and loopback-only")
+
 entry = (ROOT / "crates/vpr-owner-lab/src/main.rs").read_text(encoding="utf-8")
 local_lab = (ROOT / "crates/vpr-owner-lab/src/http_rt1.rs").read_text(encoding="utf-8")
 transport = (ROOT / "crates/vpr-owner-lab/src/http_rt1_transport.rs").read_text(encoding="utf-8")
