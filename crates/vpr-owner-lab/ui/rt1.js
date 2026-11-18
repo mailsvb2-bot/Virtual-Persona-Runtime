@@ -27,6 +27,10 @@
     document.title = "Persona — посетитель RT1 (локально)";
   }
   importVisitorInvite();
+  // Memory is an explicit staging feature. Never display unusable controls
+  // or let an absent PostgreSQL integration masquerade as an enabled product.
+  el("memory-panel").hidden = true;
+  el("memory-admin-refresh").hidden = true;
 
   function localInviteLink(token) {
     if (!/^[a-zA-Z0-9_-]{32,256}$/.test(token)) {
@@ -166,6 +170,9 @@
       if (!boot.ok) throw new Error("Не удалось получить защиту сессии.");
       const payload = await boot.json();
       csrf = payload.csrf_token;
+      const configured = payload.rt1_memory_configured === true;
+      el("memory-panel").hidden = !configured;
+      el("memory-admin-refresh").hidden = !configured;
     }
     const response = await fetch(path, {
       method: "POST",

@@ -1,8 +1,8 @@
 //! Low-cost optional memory boundary of the EXISTING OwnerLabEngine.
 //! This source is installed into crates/vpr-owner-lab/src/memory_port.rs.
 //! It does not depend on any SQL driver or create a second runtime.
-use std::sync::Arc;
 use crate::state::{LabError, OwnerLabEngine};
+use std::sync::Arc;
 
 pub trait MemoryContextPort: Send + Sync {
     /// Return the current message with a bounded memory DATA attachment, not
@@ -17,10 +17,14 @@ pub trait MemoryContextPort: Send + Sync {
     fn after_success(&self, text: &str, turn_id: u64);
     /// A receipt can be read only with the credential of the bound memory.
     /// An arbitrary personal key in the same published session is insufficient.
-    fn receipt_for_credential(&self, _token: &str) -> Option<String> { None }
+    fn receipt_for_credential(&self, _token: &str) -> Option<String> {
+        None
+    }
     /// Only for cancelling ALL live bindings of the same revoked credential.
     /// Must not authenticate the browser: DB authentication remains canonical.
-    fn credential_fingerprint(&self) -> Option<[u8; 32]> { None }
+    fn credential_fingerprint(&self) -> Option<[u8; 32]> {
+        None
+    }
 }
 
 impl OwnerLabEngine {
@@ -67,10 +71,14 @@ impl OwnerLabEngine {
         }
     }
     pub fn memory_binding_fingerprint(&self) -> Option<[u8; 32]> {
-        self.memory_port.as_ref().and_then(|p| p.credential_fingerprint())
+        self.memory_port
+            .as_ref()
+            .and_then(|p| p.credential_fingerprint())
     }
     pub(crate) fn memory_save_receipt_for(&self, credential: &str) -> Option<String> {
-        self.memory_port.as_ref().and_then(|port| port.receipt_for_credential(credential))
+        self.memory_port
+            .as_ref()
+            .and_then(|port| port.receipt_for_credential(credential))
     }
     pub(crate) fn memory_provider_guard(&self) -> Result<Option<Box<dyn Send>>, LabError> {
         match &self.memory_port {
@@ -79,6 +87,8 @@ impl OwnerLabEngine {
         }
     }
     pub(crate) fn memory_after_success(&self, text: &str, turn_id: u64) {
-        if let Some(port) = &self.memory_port { port.after_success(text, turn_id); }
+        if let Some(port) = &self.memory_port {
+            port.after_success(text, turn_id);
+        }
     }
 }

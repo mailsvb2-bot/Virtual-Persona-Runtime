@@ -92,6 +92,7 @@ struct BootstrapResponse<'a> {
     egress_enabled: bool,
     rt0_evidence_mode: bool,
     rt1_local_experiment_enabled: bool,
+    rt1_memory_configured: bool,
     voice_profile: Option<serde_json::Value>,
 }
 #[derive(Serialize)]
@@ -362,6 +363,10 @@ fn bootstrap_response(state: &AppState) -> HttpResponse {
                 egress_enabled: engine.status().egress_enabled,
                 rt0_evidence_mode: state.rt0_evidence_mode,
                 rt1_local_experiment_enabled: http_rt1::enabled(),
+                rt1_memory_configured: cfg!(feature = "rt1-memory-postgres")
+                    && http_rt1::enabled()
+                    && std::env::var_os("VPR_RT1_MEMORY_POSTGRES_DSN").is_some()
+                    && std::env::var_os("VPR_RT1_MEMORY_WORKSPACE_ID").is_some(),
                 voice_profile: state
                     .voice_profile
                     .as_ref()

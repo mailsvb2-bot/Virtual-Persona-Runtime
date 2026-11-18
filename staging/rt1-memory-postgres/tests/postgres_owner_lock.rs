@@ -3,6 +3,7 @@
 use vpr_rt1_text_memory_postgres::{MemoryError, TextMemory};
 
 #[test]
+#[ignore = "requires dedicated isolated PostgreSQL integration runner"]
 fn memory_process_owner_is_exclusive_and_released_on_drop() {
     let dsn = std::env::var("VPR_TEST_POSTGRES_DSN")
         .expect("VPR_TEST_POSTGRES_DSN must point at an isolated PostgreSQL test DB");

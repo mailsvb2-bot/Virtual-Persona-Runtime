@@ -104,9 +104,14 @@ pub(super) fn visitor_start(
     if !matches!(restore_reviewed_persona(&mut engine), Ok(true)) {
         return Err(error_response(409, "RT1_PERSONA_NOT_REVIEWED"));
     }
+    #[cfg(not(feature = "rt1-memory-postgres"))]
+    if body.memory_token.is_some() {
+        return Err(error_response(503, "RT1_MEMORY_DISABLED"));
+    }
+    #[cfg(feature = "rt1-memory-postgres")]
     if let Some(memory_token) = body.memory_token.as_deref() {
         super::memory::bind_on_start(&mut engine, memory_token)
-            .map_err(|_|error_response(403,"RT1_MEMORY_BIND_DENIED"))?;
+            .map_err(|_| error_response(403, "RT1_MEMORY_BIND_DENIED"))?;
     }
     let manager = Rt1OwnerController::new().visitor_sessions();
     let started = if let Some(worker) = worker {

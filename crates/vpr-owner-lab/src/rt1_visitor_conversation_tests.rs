@@ -79,6 +79,8 @@ fn text_and_streaming_voice_remain_denied_without_verified_worker_stop() {
     let conversation = Rt1VisitorConversation {
         manager,
         id: "unadmitted".into(),
+        memory_persona_id: "unadmitted".into(),
+        memory_fingerprint: Mutex::new(None),
         engine: Mutex::new(engine),
         interrupt: Arc::new(LiveVisitorInterrupt::default()),
         remote: None,
@@ -181,6 +183,8 @@ fn concurrent_owner_stop_prevents_duplicate_local_stop_and_false_close_receipt()
     let conversation = Rt1VisitorConversation {
         manager,
         id: "unadmitted".into(),
+        memory_persona_id: "unadmitted".into(),
+        memory_fingerprint: Mutex::new(None),
         engine: Mutex::new(engine),
         interrupt: Arc::clone(&interrupt),
         remote: None,
@@ -280,6 +284,8 @@ fn dropping_visitor_wakes_remote_stop_reconciler_without_blocking_on_worker_http
             crate::rt1_workspace_service::Rt1WorkspaceService::new(),
         ))),
         id: "unregistered-drop-test".into(),
+        memory_persona_id: "unregistered-drop-test".into(),
+        memory_fingerprint: Mutex::new(None),
         engine: Mutex::new(engine),
         interrupt: Arc::new(LiveVisitorInterrupt::default()),
         remote: Some(remote),

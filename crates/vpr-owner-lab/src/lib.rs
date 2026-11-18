@@ -20,7 +20,6 @@ mod voice_profile;
 #[cfg(windows)]
 mod windows_secure_store;
 
-pub use memory_port::MemoryContextPort;
 pub use evidence::{
     LabAvSyncDiagnosticInput, LabAvSyncEvidenceInput, LabAvSyncReference, LabAvSyncTrackIssue,
     LabEvidenceError, LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionEvidenceRecorder,
@@ -29,6 +28,7 @@ pub use evidence::{
     RT0_OWNER_LAB_MAX_AV_SYNC_SAMPLES, RT0_OWNER_LAB_MAX_MEDIA_EVENTS,
     RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
+pub use memory_port::MemoryContextPort;
 
 pub use owner_capture::{
     OwnerCaptureClaim, OwnerCaptureError, OwnerCaptureQuestion, OwnerCaptureSnapshot,

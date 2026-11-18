@@ -12,6 +12,7 @@ use vpr_owner_lab::{
 
 use super::{AppState, HttpResponse, error_response, json_response, parse_json};
 
+#[cfg(feature = "rt1-memory-postgres")]
 #[path = "http_rt1_memory.rs"]
 mod memory;
 #[path = "http_rt1_transport.rs"]
@@ -76,7 +77,8 @@ use start::visitor_start;
 struct VisitorStart {
     visitor_token: String,
     consent: bool,
-    #[serde(default)] memory_token: Option<String>,
+    #[serde(default)]
+    memory_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -180,26 +182,9 @@ pub(super) fn route_post(
     request: &mut tiny_http::Request,
     state: &Arc<AppState>,
 ) -> Option<Rt1RoutedResponse> {
-    if path == "/api/rt1/owner/memory/admin" {
-        let response = memory::owner_admin(request).unwrap_or_else(|e| e);
-        return Some(Rt1RoutedResponse { response, delivery: None });
-    }
-    if path.starts_with("/api/rt1/visitor/memory/") {
-        let result = memory::handle(path, request, state);
-        if matches!(path,
-            "/api/rt1/visitor/memory/consent" |
-            "/api/rt1/visitor/memory/erase" |
-            "/api/rt1/visitor/memory/revoke" |
-            "/api/rt1/visitor/memory/rotate") {
-            // Privacy actions can already have revoked their own session.
-            // Their JSON receipt is not media egress; no browser media lease.
-            return Some(Rt1RoutedResponse {
-                response: result.map(|(response, _)| response)
-                    .unwrap_or_else(|response| response),
-                delivery: None,
-            });
-        }
-        return Some(guarded_reply(result));
+    #[cfg(feature = "rt1-memory-postgres")]
+    if let Some(response) = memory::route(path, request, state) {
+        return Some(response);
     }
     // Never serialize a visitor LLM or microphone result and then drop its
     // authority before the HTTP writer gets the response.

@@ -1,0 +1,49 @@
+name: RT1 staging PostgreSQL real SQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rt1-memory-postgres-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgresql:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Rust 1.88.0
+        run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Start isolated PostgreSQL 16 with TLS
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-16 postgresql-client-16 openssl
+          sudo mkdir -p /tmp/vpr-pg-ci
+          sudo chown postgres:postgres /tmp/vpr-pg-ci
+          sudo -u postgres /usr/lib/postgresql/16/bin/initdb -D /tmp/vpr-pg-ci/data --auth-local=trust --auth-host=trust --no-instructions
+          sudo openssl req -x509 -nodes -newkey rsa:2048 -days 1 -keyout /tmp/vpr-pg-ci/server.key -out /tmp/vpr-pg-ci/server.crt -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
+          sudo chown postgres:postgres /tmp/vpr-pg-ci/server.key /tmp/vpr-pg-ci/server.crt
+          sudo chmod 600 /tmp/vpr-pg-ci/server.key
+          printf "port = 65433\nlisten_addresses = '127.0.0.1'\nssl = on\nssl_cert_file = '/tmp/vpr-pg-ci/server.crt'\nssl_key_file = '/tmp/vpr-pg-ci/server.key'\n" | sudo tee -a /tmp/vpr-pg-ci/data/postgresql.conf
+          sudo -u postgres /usr/lib/postgresql/16/bin/pg_ctl -D /tmp/vpr-pg-ci/data -l /tmp/vpr-pg-ci/server.log start
+          psql -h 127.0.0.1 -p 65433 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE vprmemtest LOGIN"
+          psql -h 127.0.0.1 -p 65433 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE vprmemtest OWNER vprmemtest TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C.UTF-8' LC_CTYPE 'C.UTF-8'"
+          for migration in staging/rt1-memory-postgres/migrations/*.sql; do
+            psql -h 127.0.0.1 -p 65433 -U vprmemtest -d vprmemtest -v ON_ERROR_STOP=1 -f "$migration"
+          done
+      - name: Real SQL migrations, consent, revocation, outbox
+        env:
+          SSL_CERT_FILE: /tmp/vpr-pg-ci/server.crt
+          VPR_TEST_POSTGRES_DSN: "host=localhost port=65433 user=vprmemtest dbname=vprmemtest sslmode=require"
+        run: cargo test --locked -p vpr-rt1-text-memory-postgres -- --test-threads=1 --include-ignored
+      - name: Preserve research-only deployment gates
+        run: |
+          python3 tests/architecture/check_boundaries.py
+          python3 tests/architecture/check_rt1_persistence_spike.py
