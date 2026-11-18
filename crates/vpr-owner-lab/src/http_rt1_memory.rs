@@ -1,5 +1,5 @@
 //! Exact RT1 HTTP extension: only the existing local RT1 router calls this.
-//! PostgreSQL credentials are NEVER used as publication credentials. This
+//! `PostgreSQL` credentials are NEVER used as publication credentials. This
 //! module requires an independently admitted, live RT1 visitor session.
 use super::{AppState, HttpResponse, error_response, json_response, parse_json};
 #[path = "rt1_memory_port.rs"]
@@ -40,9 +40,7 @@ pub(super) fn route(
         ) {
             // A revoked session must still receive its privacy-operation receipt.
             return Some(super::Rt1RoutedResponse {
-                response: result
-                    .map(|(response, _)| response)
-                    .unwrap_or_else(|response| response),
+                response: result.map_or_else(|response| response, |(response, _)| response),
                 delivery: None,
             });
         }
@@ -185,16 +183,16 @@ fn stop_bound_memory_sessions(state: &AppState, token: &str) -> bool {
     // Revoke future LLM dispatch BEFORE requesting canonical remote STOP.
     let mut confirmed = revoke_egress_for_token(token);
     for (id, conversation) in matches {
-        if conversation.revoke_memory_session().is_err() {
-            confirmed = false;
-        } else if super::finalize_registered_stop(
-            &state.rt1.conversations,
-            &id,
-            &conversation,
-            Ok(()),
-            conversation.has_remote_video_stop_receipt_path(),
-        )
-        .is_err()
+        let stopped = conversation.revoke_memory_session();
+        if stopped.is_err()
+            || super::finalize_registered_stop(
+                &state.rt1.conversations,
+                &id,
+                &conversation,
+                stopped,
+                conversation.has_remote_video_stop_receipt_path(),
+            )
+            .is_err()
         {
             confirmed = false;
         }
@@ -222,7 +220,239 @@ fn scope(
     Ok(principal)
 }
 
-/// A tiny read-only context adapter. Always uses the SAME canonical OwnerLab
+struct MemoryActionContext<'a> {
+    state: &'a AppState,
+    db: &'a Arc<TextMemory>,
+    conversation: &'a Arc<Rt1VisitorConversation>,
+    principal: &'a StablePrincipal,
+    token: &'a str,
+    body: &'a MemoryRequest,
+}
+
+fn handle_note_action(
+    path: &str,
+    ctx: &MemoryActionContext<'_>,
+) -> Result<serde_json::Value, HttpResponse> {
+    let (db, principal, token, body, conversation) =
+        (ctx.db, ctx.principal, ctx.token, ctx.body, ctx.conversation);
+    let result = match path {
+        "/api/rt1/visitor/memory/connect" => {
+            conversation
+                .bind_memory(Arc::new(VisitorMemoryPort::create(
+                    db,
+                    principal.clone(),
+                    token,
+                )?))
+                .map_err(|_| error_response(409, "RT1_MEMORY_BIND_DENIED"))?;
+            serde_json::json!({"ok":true, "memory_connected":true})
+        }
+        "/api/rt1/visitor/memory/list" => {
+            let facts = db
+                .list_facts(&principal, body.cursor.as_deref(), 50)
+                .map_err(denied)?;
+            let next_cursor = if facts.len() == 50 {
+                facts.last().map(|fact| fact.key.clone())
+            } else {
+                None
+            };
+            serde_json::json!({"facts":facts,"next_cursor":next_cursor})
+        }
+        "/api/rt1/visitor/memory/remember" => {
+            let key = body
+                .key
+                .as_deref()
+                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
+            let content = body
+                .content
+                .as_deref()
+                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
+            let id = body
+                .operation_id
+                .as_deref()
+                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
+            db.remember(
+                &principal,
+                id,
+                key,
+                content,
+                MemorySource::VisitorExplicit,
+                365,
+            )
+            .map_err(denied)?;
+            serde_json::json!({"ok":true,"saved":true})
+        }
+        "/api/rt1/visitor/memory/contradictions" => {
+            let content = body
+                .content
+                .as_deref()
+                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
+            let matches = db
+                .possible_contradictions(&principal, content)
+                .map_err(denied)?;
+            serde_json::json!({"candidates":matches,"automatic_overwrite":false})
+        }
+        "/api/rt1/visitor/memory/validity" => {
+            let key = body
+                .key
+                .as_deref()
+                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
+            db.set_validity(&principal, key, body.valid_from, body.valid_until)
+                .map_err(denied)?;
+            serde_json::json!({"ok":true,"validity_updated":true})
+        }
+        "/api/rt1/visitor/memory/forget" => {
+            let key = body
+                .key
+                .as_deref()
+                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
+            let id = body
+                .operation_id
+                .as_deref()
+                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
+            db.forget(&principal, id, key).map_err(denied)?;
+            serde_json::json!({"ok":true,"forgotten":true})
+        }
+        _ => return Err(error_response(404, "RT1_MEMORY_ROUTE_NOT_FOUND")),
+    };
+    Ok(result)
+}
+
+fn handle_summary_action(
+    path: &str,
+    ctx: &MemoryActionContext<'_>,
+) -> Result<serde_json::Value, HttpResponse> {
+    let (db, principal, body) = (ctx.db, ctx.principal, ctx.body);
+    let result = match path {
+        "/api/rt1/visitor/memory/summary/draft" => {
+            let (text, source_digest) = db.draft_fact_summary(&principal).map_err(denied)?;
+            serde_json::json!({"text":text,"source_digest":source_digest,"approved":false})
+        }
+        "/api/rt1/visitor/memory/summary/approve" => {
+            let key = body
+                .key
+                .as_deref()
+                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
+            let content = body
+                .content
+                .as_deref()
+                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
+            let digest = body
+                .source_digest
+                .as_deref()
+                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
+            // Verify candidate still describes current facts. The user must
+            // explicitly approve the draft after inspecting it.
+            let (_current_text, current_digest) =
+                db.draft_fact_summary(&principal).map_err(denied)?;
+            if digest != current_digest {
+                return Err(error_response(409, "RT1_MEMORY_SUMMARY_STALE"));
+            }
+            db.save_approved_summary(&principal, key, content, digest)
+                .map_err(denied)?;
+            serde_json::json!({"ok":true,"approved":true})
+        }
+        "/api/rt1/visitor/memory/summary/list" => {
+            let summaries = db.list_summaries(&principal).map_err(denied)?;
+            serde_json::json!({"summaries":summaries})
+        }
+        _ => return Err(error_response(404, "RT1_MEMORY_ROUTE_NOT_FOUND")),
+    };
+    Ok(result)
+}
+
+fn handle_privacy_action(
+    path: &str,
+    ctx: &MemoryActionContext<'_>,
+) -> Result<(HttpResponse, Arc<Rt1VisitorConversation>), HttpResponse> {
+    let (db, principal, token, body, state) =
+        (ctx.db, ctx.principal, ctx.token, ctx.body, ctx.state);
+    let conversation = Arc::clone(ctx.conversation);
+    match path {
+        "/api/rt1/visitor/memory/consent" => {
+            let enabled = body
+                .enabled
+                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
+            if !enabled {
+                let stopped = stop_bound_memory_sessions(state, token);
+                let revision = db.set_consent(&principal, false).map_err(denied)?;
+                return if stopped {
+                    Ok((
+                        json_response(
+                            200,
+                            &serde_json::json!({"ok":true,
+                        "consent":false,"revision":revision,"session_stopped":true}),
+                        ),
+                        conversation,
+                    ))
+                } else {
+                    Err(error_response(502, "RT1_MEMORY_REMOTE_STOP_UNCONFIRMED"))
+                };
+            }
+            let revision = db.set_consent(&principal, true).map_err(denied)?;
+            conversation
+                .authorize_memory_action()
+                .map_err(|_| error_response(409, "RT1_VISITOR_REVOKED"))?;
+            Ok((
+                json_response(200, &serde_json::json!({"ok":true,"consent":true,"revision":revision})),
+                conversation,
+            ))
+        }
+        "/api/rt1/visitor/memory/erase" => {
+            let stopped = stop_bound_memory_sessions(state, token);
+            db.erase_visitor(&principal).map_err(denied)?;
+            return if stopped {
+                Ok((
+                    json_response(
+                        200,
+                        &serde_json::json!({"ok":true,"erased":true,
+                    "session_stopped":true}),
+                    ),
+                    conversation,
+                ))
+            } else {
+                Err(error_response(502, "RT1_MEMORY_REMOTE_STOP_UNCONFIRMED"))
+            };
+        }
+        "/api/rt1/visitor/memory/rotate" => {
+            let stopped = stop_bound_memory_sessions(state, token);
+            if !stopped {
+                return Err(error_response(502, "RT1_MEMORY_REMOTE_STOP_UNCONFIRMED"));
+            }
+            let replacement = db.rotate_credential(token).map_err(denied)?;
+            // The canonical STOP has revoked this conversation. Return the
+            // replacement credential directly: a post-STOP session authorize
+            // would fail and irretrievably hide the newly issued secret.
+            return Ok((
+                json_response(
+                    200,
+                    &serde_json::json!({
+                        "ok":true,"memory_token":replacement,"session_stopped":true
+                    }),
+                ),
+                conversation,
+            ));
+        }
+        "/api/rt1/visitor/memory/revoke" => {
+            let stopped = stop_bound_memory_sessions(state, token);
+            db.revoke_credential(token).map_err(denied)?;
+            return if stopped {
+                Ok((
+                    json_response(
+                        200,
+                        &serde_json::json!({"ok":true,"revoked":true,
+                    "session_stopped":true}),
+                    ),
+                    conversation,
+                ))
+            } else {
+                Err(error_response(502, "RT1_MEMORY_REMOTE_STOP_UNCONFIRMED"))
+            };
+        }
+        _ => Err(error_response(404, "RT1_MEMORY_ROUTE_NOT_FOUND")),
+    }
+}
+
+/// A tiny read-only context adapter. Always uses the SAME canonical `OwnerLab`
 /// engine and provider turn. Database failure yields no private context.
 /// Memory facts are data, not new instructions or verified Persona claims.
 /// Called ONLY via current RT1 POST router; existing CSRF and loopback gates
@@ -279,190 +509,27 @@ pub(super) fn handle(
         .as_deref()
         .ok_or_else(|| error_response(403, "RT1_MEMORY_CREDENTIAL_REQUIRED"))?;
     let principal = scope(&db, token, &workspace, &persona)?;
-    let result = match path {
-        "/api/rt1/visitor/memory/connect" => {
-            conversation
-                .bind_memory(Arc::new(VisitorMemoryPort::create(
-                    db.clone(),
-                    principal,
-                    token,
-                )?))
-                .map_err(|_| error_response(409, "RT1_MEMORY_BIND_DENIED"))?;
-            serde_json::json!({"ok":true, "memory_connected":true})
-        }
-        "/api/rt1/visitor/memory/consent" => {
-            let enabled = body
-                .enabled
-                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
-            if !enabled {
-                let stopped = stop_bound_memory_sessions(state, token);
-                let revision = db.set_consent(&principal, false).map_err(denied)?;
-                return if stopped {
-                    Ok((
-                        json_response(
-                            200,
-                            &serde_json::json!({"ok":true,
-                        "consent":false,"revision":revision,"session_stopped":true}),
-                        ),
-                        conversation,
-                    ))
-                } else {
-                    Err(error_response(502, "RT1_MEMORY_REMOTE_STOP_UNCONFIRMED"))
-                };
-            }
-            let revision = db.set_consent(&principal, true).map_err(denied)?;
-            serde_json::json!({"ok":true,"consent":true,"revision":revision})
-        }
-        "/api/rt1/visitor/memory/list" => {
-            let facts = db
-                .list_facts(&principal, body.cursor.as_deref(), 50)
-                .map_err(denied)?;
-            let next_cursor = if facts.len() == 50 {
-                facts.last().map(|fact| fact.key.clone())
-            } else {
-                None
-            };
-            serde_json::json!({"facts":facts,"next_cursor":next_cursor})
-        }
-        "/api/rt1/visitor/memory/remember" => {
-            let key = body
-                .key
-                .as_deref()
-                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
-            let content = body
-                .content
-                .as_deref()
-                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
-            let id = body
-                .operation_id
-                .as_deref()
-                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
-            db.remember(
-                &principal,
-                id,
-                key,
-                content,
-                MemorySource::VisitorExplicit,
-                365,
-            )
-            .map_err(denied)?;
-            serde_json::json!({"ok":true,"saved":true})
-        }
-        "/api/rt1/visitor/memory/contradictions" => {
-            let content = body
-                .content
-                .as_deref()
-                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
-            let matches = db
-                .possible_contradictions(&principal, content)
-                .map_err(denied)?;
-            serde_json::json!({"candidates":matches,"automatic_overwrite":false})
-        }
-        "/api/rt1/visitor/memory/validity" => {
-            let key = body
-                .key
-                .as_deref()
-                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
-            db.set_validity(&principal, key, body.valid_from, body.valid_until)
-                .map_err(denied)?;
-            serde_json::json!({"ok":true,"validity_updated":true})
-        }
-        "/api/rt1/visitor/memory/summary/draft" => {
-            let (text, source_digest) = db.draft_fact_summary(&principal).map_err(denied)?;
-            serde_json::json!({"text":text,"source_digest":source_digest,"approved":false})
-        }
-        "/api/rt1/visitor/memory/summary/approve" => {
-            let key = body
-                .key
-                .as_deref()
-                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
-            let content = body
-                .content
-                .as_deref()
-                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
-            let digest = body
-                .source_digest
-                .as_deref()
-                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
-            // Verify candidate still describes current facts. The user must
-            // explicitly approve the draft after inspecting it.
-            let (_current_text, current_digest) =
-                db.draft_fact_summary(&principal).map_err(denied)?;
-            if digest != current_digest {
-                return Err(error_response(409, "RT1_MEMORY_SUMMARY_STALE"));
-            }
-            db.save_approved_summary(&principal, key, content, digest)
-                .map_err(denied)?;
-            serde_json::json!({"ok":true,"approved":true})
-        }
-        "/api/rt1/visitor/memory/summary/list" => {
-            let summaries = db.list_summaries(&principal).map_err(denied)?;
-            serde_json::json!({"summaries":summaries})
-        }
-        "/api/rt1/visitor/memory/forget" => {
-            let key = body
-                .key
-                .as_deref()
-                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
-            let id = body
-                .operation_id
-                .as_deref()
-                .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
-            db.forget(&principal, id, key).map_err(denied)?;
-            serde_json::json!({"ok":true,"forgotten":true})
-        }
-        "/api/rt1/visitor/memory/erase" => {
-            let stopped = stop_bound_memory_sessions(state, token);
-            db.erase_visitor(&principal).map_err(denied)?;
-            return if stopped {
-                Ok((
-                    json_response(
-                        200,
-                        &serde_json::json!({"ok":true,"erased":true,
-                    "session_stopped":true}),
-                    ),
-                    conversation,
-                ))
-            } else {
-                Err(error_response(502, "RT1_MEMORY_REMOTE_STOP_UNCONFIRMED"))
-            };
-        }
-        "/api/rt1/visitor/memory/rotate" => {
-            let stopped = stop_bound_memory_sessions(state, token);
-            if !stopped {
-                return Err(error_response(502, "RT1_MEMORY_REMOTE_STOP_UNCONFIRMED"));
-            }
-            let replacement = db.rotate_credential(token).map_err(denied)?;
-            // The canonical STOP has revoked this conversation. Return the
-            // replacement credential directly: a post-STOP session authorize
-            // would fail and irretrievably hide the newly issued secret.
-            return Ok((
-                json_response(
-                    200,
-                    &serde_json::json!({
-                        "ok":true,"memory_token":replacement,"session_stopped":true
-                    }),
-                ),
-                conversation,
-            ));
-        }
-        "/api/rt1/visitor/memory/revoke" => {
-            let stopped = stop_bound_memory_sessions(state, token);
-            db.revoke_credential(token).map_err(denied)?;
-            return if stopped {
-                Ok((
-                    json_response(
-                        200,
-                        &serde_json::json!({"ok":true,"revoked":true,
-                    "session_stopped":true}),
-                    ),
-                    conversation,
-                ))
-            } else {
-                Err(error_response(502, "RT1_MEMORY_REMOTE_STOP_UNCONFIRMED"))
-            };
-        }
-        _ => return Err(error_response(404, "RT1_MEMORY_ROUTE_NOT_FOUND")),
+    let context = MemoryActionContext {
+        state,
+        db: &db,
+        conversation: &conversation,
+        principal: &principal,
+        token,
+        body: &body,
+    };
+    if matches!(
+        path,
+        "/api/rt1/visitor/memory/consent"
+            | "/api/rt1/visitor/memory/erase"
+            | "/api/rt1/visitor/memory/rotate"
+            | "/api/rt1/visitor/memory/revoke"
+    ) {
+        return handle_privacy_action(path, &context);
+    }
+    let result = if path.starts_with("/api/rt1/visitor/memory/summary/") {
+        handle_summary_action(path, &context)?
+    } else {
+        handle_note_action(path, &context)?
     };
     conversation
         .authorize_memory_action()
@@ -482,7 +549,7 @@ pub(super) fn bind_on_start(
         .memory_persona_id()
         .map_err(|_| error_response(403, "RT1_MEMORY_PERSONA_MISSING"))?;
     let principal = scope(&db, token, &workspace, &persona)?;
-    let port = VisitorMemoryPort::create(db, principal, token)?;
+    let port = VisitorMemoryPort::create(&db, principal, token)?;
     engine
         .bind_memory_port(Arc::new(port))
         .map_err(|_| error_response(409, "RT1_MEMORY_BIND_DENIED"))

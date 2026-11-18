@@ -22,7 +22,7 @@ pub(super) struct VisitorMemoryPort {
 }
 impl VisitorMemoryPort {
     pub(super) fn create(
-        db: Arc<TextMemory>,
+        db: &Arc<TextMemory>,
         principal: StablePrincipal,
         token: &str,
     ) -> Result<Self, HttpResponse> {
@@ -34,7 +34,7 @@ impl VisitorMemoryPort {
             db: Arc::clone(&db),
             principal,
             token: token.to_owned(),
-            nonce: bytes.iter().map(|v| format!("{v:02x}")).collect(),
+            nonce: hex_bytes(&bytes),
             last_save: Mutex::new(None),
             egress: Arc::clone(&egress),
             orchestrator: MemoryOrchestrator::with_fence(Arc::clone(&db), Arc::clone(&egress)),
@@ -53,6 +53,15 @@ impl VisitorMemoryPort {
         Ok(())
     }
 }
+fn hex_bytes(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut out, "{byte:02x}").expect("String formatting is infallible");
+    }
+    out
+}
+
 fn constant_time_equal(a: &[u8], b: &[u8]) -> bool {
     let mut diff = a.len() ^ b.len();
     for i in 0..a.len().max(b.len()) {
@@ -72,10 +81,8 @@ impl MemoryContextPort for VisitorMemoryPort {
                 *self.prepared.lock().map_err(|_| LabError::Internal)? = Some(prepared);
                 Ok(input)
             }
-            Err(MemoryError::NotConsented) => Ok(text.to_owned()),
-            // DB outage must not be mistaken for a forgotten user, and may
-            // not authorize stale private context. A normal no-memory turn is
-            // still permitted; no memory text leaves this process.
+            // DB outage must not authorize stale private context; a plain,
+            // no-memory turn remains possible without private data egress.
             Err(_) => Ok(text.to_owned()),
         }
     }
@@ -108,10 +115,7 @@ impl MemoryContextPort for VisitorMemoryPort {
         let digest = Sha256::digest(fact.as_bytes());
         let key = format!(
             "note-{}",
-            digest[..12]
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
+            hex_bytes(&digest[..12])
         );
         let operation = format!("turn-{}-{turn_id}", self.nonce);
         let result = self
