@@ -393,7 +393,10 @@ fn handle_privacy_action(
                 .authorize_memory_action()
                 .map_err(|_| error_response(409, "RT1_VISITOR_REVOKED"))?;
             Ok((
-                json_response(200, &serde_json::json!({"ok":true,"consent":true,"revision":revision})),
+                json_response(
+                    200,
+                    &serde_json::json!({"ok":true,"consent":true,"revision":revision}),
+                ),
                 conversation,
             ))
         }

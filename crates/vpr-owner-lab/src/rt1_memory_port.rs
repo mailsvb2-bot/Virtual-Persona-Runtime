@@ -113,10 +113,7 @@ impl MemoryContextPort for VisitorMemoryPort {
             return;
         };
         let digest = Sha256::digest(fact.as_bytes());
-        let key = format!(
-            "note-{}",
-            hex_bytes(&digest[..12])
-        );
+        let key = format!("note-{}", hex_bytes(&digest[..12]));
         let operation = format!("turn-{}-{turn_id}", self.nonce);
         let result = self
             .db
