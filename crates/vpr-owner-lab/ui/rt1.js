@@ -54,6 +54,9 @@
   let voiceEnabled = false;
   let voiceInFlight = false;
   let textInFlight = false;
+  // A timed-out HTTP request is not evidence that server-side TTS/PCM stopped.
+  // Keep the session closed to new turns until explicit remote STOP/close.
+  let textDeliveryUncertain = false;
   let textController = null;
   let textRequestEpoch = 0;
   let microphonePending = false;
@@ -208,7 +211,7 @@
       el("join").disabled = Boolean(sessionId);
       el("leave").disabled = !sessionId;
       // A concurrent owner action must not re-enable capture while a voice turn is pending.
-      el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight || microphonePending;
+      el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight || microphonePending || textDeliveryUncertain;
       el("interrupt").disabled = !sessionId || stopping || pageHidden || (!voiceEnabled && !textInFlight) || microphonePending;
       el("send-text").disabled = !sessionId || stopping || pageHidden || textInFlight;
     }
@@ -385,7 +388,7 @@
   }
 
   async function beginMicrophone() {
-    if (!sessionId || stopping || microphone || microphonePending || !voiceEnabled || voiceInFlight || textInFlight) return;
+    if (!sessionId || stopping || microphone || microphonePending || !voiceEnabled || voiceInFlight || textInFlight || textDeliveryUncertain) return;
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("Микрофон доступен только в защищённом браузере.");
     }
@@ -455,7 +458,7 @@
       // A stale permission request must not unlock a newer session's controls.
       if (request === microphoneRequest) {
         microphonePending = false;
-        el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight || microphonePending;
+        el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight || microphonePending || textDeliveryUncertain;
       }
     }
   }
@@ -520,6 +523,7 @@
     }
     if (sessionId === id && !stopping) {
       if (stopped.remote_video_stop_confirmed === true) {
+        textDeliveryUncertain = false;
         // This STOP closes the whole worker session; never resume its mic.
         voiceEnabled = false;
         el("speak").disabled = true;
@@ -536,7 +540,7 @@
   });
 
   el("send-text").addEventListener("click", async () => {
-    if (!sessionId || stopping || pageHidden || textInFlight || voiceInFlight || microphonePending || microphone) return;
+    if (!sessionId || stopping || pageHidden || textInFlight || voiceInFlight || microphonePending || microphone || textDeliveryUncertain) return;
     const text = el("visitor-text").value.trim();
     if (!text || text.length > 8192) {
       message("Введите вопрос до 8192 символов.", true);
@@ -562,15 +566,22 @@
       message("Текстовый ответ передан каноническому голосовому медиатракту Persona.");
     } catch (error) {
       if (sessionId === id && !stopping && !pageHidden && epoch === textRequestEpoch) {
-        message(error.name === "AbortError" ? "Текстовый запрос прерван." : String(error.message || error), error.name !== "AbortError");
+        if (error.name === "AbortError") {
+          // Browser cancellation never authorizes the next turn. The remote
+          // worker may still be playing PCM; require explicit STOP/close.
+          textDeliveryUncertain = true;
+          message("Ожидание ответа истекло; удалённая остановка не подтверждена. Нажмите «Прервать» или завершите сессию.", true);
+        } else {
+          message(String(error.message || error), true);
+        }
       }
     } finally {
       clearTimeout(timeout);
       if (textController === controller) {
         textController = null;
         textInFlight = false;
-        el("send-text").disabled = !sessionId || stopping || pageHidden || voiceInFlight || microphonePending || Boolean(microphone);
-        el("speak").disabled = !sessionId || stopping || pageHidden || !voiceEnabled || voiceInFlight || microphonePending;
+        el("send-text").disabled = !sessionId || stopping || pageHidden || voiceInFlight || microphonePending || Boolean(microphone) || textDeliveryUncertain;
+        el("speak").disabled = !sessionId || stopping || pageHidden || !voiceEnabled || voiceInFlight || microphonePending || textDeliveryUncertain;
         el("interrupt").disabled = !sessionId || stopping || pageHidden || (!voiceEnabled && !textInFlight) || microphonePending;
       }
     }
@@ -626,7 +637,7 @@
       stopping = false;
       el("join").disabled = Boolean(sessionId);
       el("leave").disabled = !sessionId;
-      el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight || microphonePending;
+      el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight || microphonePending || textDeliveryUncertain;
     }
   }
 
@@ -784,7 +795,7 @@
       }, 2000);
       assertCurrent();
       voiceEnabled = advertisedVoice;
-      el("speak").disabled = !voiceEnabled || voiceInFlight || microphonePending;
+      el("speak").disabled = !voiceEnabled || voiceInFlight || microphonePending || textDeliveryUncertain;
       el("interrupt").disabled = !voiceEnabled;
       el("send-text").disabled = false;
       if (transport.kind === "web_rtc") message("Ожидаем аудио и видео от Persona…");
