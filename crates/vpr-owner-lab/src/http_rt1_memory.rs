@@ -272,7 +272,8 @@ fn handle_note_action(
                 .as_deref()
                 .ok_or_else(|| error_response(400, "RT1_MEMORY_INVALID_INPUT"))?;
             // HTTP and voice-outbox writes use one versioned PostgreSQL owner.
-            let outcome = db.remember_reviewed(principal, id, key, content, 365)
+            let outcome = db
+                .remember_reviewed(principal, id, key, content, 365)
                 .map_err(|e| match e {
                     MemoryError::InvalidInput => error_response(400, "RT1_MEMORY_INVALID_INPUT"),
                     MemoryError::NotConsented => error_response(403, "RT1_MEMORY_DENIED"),
