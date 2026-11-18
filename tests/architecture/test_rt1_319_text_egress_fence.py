@@ -34,7 +34,7 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
         self.assertIn("verified_worker_voice_egress_active", capability)
         self.assertIn("!worker.is_revoked()", capability)
         self.assertIn("self.manager.begin_provider_egress(&self.id)?", body)
-        self.assertRegex(body, r"self\s*\.engine\s*\.lock\(\)\s*\.text_voice_turn_streaming\(text, move \|handle\|")
+        self.assertRegex(body, r"self\s*\.engine\s*\.lock\(\)\s*\.text_voice_turn_streaming\(\s*text,\s*move \|handle\|")
         self.assertIn("segment.client_command.is_some()", body)
         self.assertIn("Err(LabError::InvalidState)", body)
         self.assertIn("handle.interrupt()", body)
