@@ -33,7 +33,7 @@ class Rt1BrowserActions(unittest.TestCase):
         self.assertGreaterEqual(len(buttons.identifiers), 12)
         for identifier in buttons.identifiers:
             with self.subTest(button=identifier):
-                pattern = r'el\\("' + re.escape(identifier) + r'"\\)\\.addEventListener\\("click"'
+                pattern = re.escape('el("' + identifier + '").addEventListener("click"')
                 self.assertRegex(js, pattern)
 
     def test_browser_api_paths_are_registered_by_single_canonical_router(self):
