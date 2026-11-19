@@ -87,6 +87,7 @@ fn acquire_sibling_lock(path: &Path) -> Result<File, String> {
     let file = options
         .open(&lock_path)
         .map_err(|_| "Persona transaction lock inaccessible")?;
+    #[cfg(unix)]
     let opened = file
         .metadata()
         .map_err(|_| "Persona transaction lock inaccessible")?;
