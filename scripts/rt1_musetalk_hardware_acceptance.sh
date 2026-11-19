@@ -25,6 +25,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 [[ -f "$SCRIPT_DIR/rt1_musetalk_gpu_acceptance.py" ]] || die "GPU acceptance entrypoint missing"
 [[ -f "$SCRIPT_DIR/rt1_musetalk_offline_preflight.py" ]] || die "offline preflight missing"
 [[ -f "$SCRIPT_DIR/rt1_musetalk_environment.py" ]] || die "runtime preflight missing"
+[[ -f "$SCRIPT_DIR/rt1_musetalk_wheelhouse.py" ]] || die "wheelhouse preflight missing"
 
 # Evidence must be an operator-approved, non-existing destination.
 [[ "$#" -eq 1 ]] || die "usage: bash scripts/rt1_musetalk_hardware_acceptance.sh /safe/path/new-evidence.json"
