@@ -119,9 +119,6 @@ pub(super) fn visitor_start(
         return Err(error_response(403, "CONSENT_REQUIRED"));
     }
     let manager = Rt1OwnerController::new().visitor_sessions();
-    // Fail closed before provider construction and per-visitor engine
-    // allocation. This is a cheap canonical read, NOT an egress permit;
-    // start_with_verified_worker/open() must re-admit after preparation.
     manager
         .preflight_visitor(&body.visitor_token)
         .map_err(|_| error_response(409, "RT1_VISITOR_ACCESS_DENIED"))?;
