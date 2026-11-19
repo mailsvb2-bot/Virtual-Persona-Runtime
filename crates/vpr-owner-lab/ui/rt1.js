@@ -659,20 +659,35 @@
   el("leave").addEventListener("click", () => busy(leave));
 
   function waitForIceGathering(connection, timeoutMs = 15000) {
-    if (connection.iceGatheringState === "complete") return Promise.resolve();
+    // A failed/closed peer cannot produce a usable browser SDP answer.
+    // Do not stall the visitor journey until timeout after a network failure
+    // or after STOP has already closed the local PeerConnection.
     return new Promise((resolve, reject) => {
+      let finished = false;
       const timer = setTimeout(() => {
-        connection.removeEventListener("icegatheringstatechange", check);
-        reject(new Error("ICE-соединение не подготовлено. Проверьте сеть."));
+        finish(new Error("ICE-соединение не подготовлено. Проверьте сеть."));
       }, timeoutMs);
+      function finish(error) {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        for (const event of ["icegatheringstatechange", "connectionstatechange", "signalingstatechange"]) {
+          connection.removeEventListener(event, check);
+        }
+        if (error) reject(error);
+        else resolve();
+      }
       function check() {
-        if (connection.iceGatheringState === "complete") {
-          clearTimeout(timer);
-          connection.removeEventListener("icegatheringstatechange", check);
-          resolve();
+        if (connection.signalingState === "closed" ||
+            ["failed", "closed"].includes(connection.connectionState)) {
+          finish(new Error("WebRTC-соединение закрыто или завершилось ошибкой."));
+        } else if (connection.iceGatheringState === "complete") {
+          finish();
         }
       }
-      connection.addEventListener("icegatheringstatechange", check);
+      for (const event of ["icegatheringstatechange", "connectionstatechange", "signalingstatechange"]) {
+        connection.addEventListener(event, check);
+      }
       check();
     });
   }

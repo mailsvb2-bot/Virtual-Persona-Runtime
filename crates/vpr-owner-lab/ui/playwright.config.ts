@@ -7,6 +7,8 @@ export default defineConfig({
     "backend-voice-journey.spec.ts",
     "backend-expressive-journey.spec.ts",
     "rt1-local-canary.spec.ts",
+    // Requires the actual RT1 loopback owner server, not the static UI fixture.
+    "rt1-ice-failure-cleanup.spec.ts",
     "rt1-late-microphone-revoke.spec.ts",
     "rt1-late-livekit-connect.spec.ts",
     "rt1-voice-inflight-stop.spec.ts",
