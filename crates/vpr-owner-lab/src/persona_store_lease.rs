@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 /// # Errors
 /// Fails closed when the implicit Windows per-user lock directory is unavailable.
 pub(crate) fn lock_target() -> Result<Option<PathBuf>, String> {
-    if let Some(path) = env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH")
-        .filter(|value| !value.is_empty())
+    if let Some(path) =
+        env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH").filter(|value| !value.is_empty())
     {
         return Ok(Some(PathBuf::from(path)));
     }
@@ -23,9 +23,11 @@ pub(crate) fn lock_target() -> Result<Option<PathBuf>, String> {
         let root = env::var_os("LOCALAPPDATA")
             .or_else(|| env::var_os("APPDATA"))
             .ok_or_else(|| "Windows Persona lock directory unavailable".to_owned())?;
-        return Ok(Some(PathBuf::from(root)
-            .join("Virtual-Persona-Runtime")
-            .join("owner-lab-credential-manager-v2")));
+        return Ok(Some(
+            PathBuf::from(root)
+                .join("Virtual-Persona-Runtime")
+                .join("owner-lab-credential-manager-v2"),
+        ));
     }
     #[cfg(not(windows))]
     {
