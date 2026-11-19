@@ -24,7 +24,10 @@ SCHEMA = "vpr.rt1.offline-clean-install.v1"
 def locked_requirements(wheelhouse: Path, manifest: Path, approved_sha256: str):
     """Verify bytes first; then bind each direct file URL to its exact hash."""
     evidence = verify_wheelhouse(wheelhouse, manifest, approved_sha256)
-    lock = json.loads(manifest.read_bytes())
+    raw = manifest.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != evidence["approved_manifest_sha256"]:
+        raise ValueError("approved wheelhouse manifest changed after verification")
+    lock = json.loads(raw)
     # Path.as_uri() percent-escapes spaces and shell characters; subprocess
     # receives argv directly and never interprets wheel names as shell code.
     lines = []
