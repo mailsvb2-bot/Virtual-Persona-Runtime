@@ -73,6 +73,13 @@ impl PersistedPersonaV2 {
                 {
                     return Err("canonical Persona identity or version mismatch".into());
                 }
+                // A competing writer must never replace reviewed content at
+                // the same PersonaVersion. Identical retries remain safe.
+                if old.snapshot.persona_version == next.snapshot.persona_version
+                    && old.snapshot != next.snapshot
+                {
+                    return Err("canonical Persona same-version write conflict".into());
+                }
                 next.workspace = old.workspace;
                 if old.snapshot.persona_version < next.snapshot.persona_version {
                     if let Some(workspace) = next.workspace.as_mut() {
