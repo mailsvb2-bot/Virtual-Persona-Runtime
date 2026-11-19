@@ -79,8 +79,11 @@ def verify_wheelhouse(wheelhouse: Path, manifest_path: Path, approved_sha256: st
                 check.update(chunk)
             if not hmac.compare_digest(check.hexdigest(), expected_digest):
                 raise ValueError("wheelhouse wheel hash mismatch")
-        if not zipfile.is_zipfile(path):
-            raise ValueError("wheelhouse file is not a ZIP wheel")
+            # Check the *same opened file descriptor*, not a path that could
+            # be swapped after hashing and before ZIP inspection.
+            handle.seek(0)
+            if not zipfile.is_zipfile(handle):
+                raise ValueError("wheelhouse file is not a ZIP wheel")
     return {
         "schema": "vpr.rt1.gpu-wheelhouse-preflight.v1",
         "python_target": "3.10",
