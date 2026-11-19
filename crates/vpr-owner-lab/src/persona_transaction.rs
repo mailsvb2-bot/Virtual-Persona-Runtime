@@ -124,8 +124,9 @@ mod tests {
         let Some(path) = std::env::var_os("VPR_TEST_CHILD_PERSONA_LOCK") else {
             return;
         };
-        // The parent is holding the lock. A competing process cannot enter.
-        assert!(begin_for_path(Path::new(&path)).is_err());
+        let should_succeed = std::env::var_os("VPR_TEST_CHILD_LOCK_RELEASED").is_some();
+        assert_eq!(begin_for_path(Path::new(&path)).is_ok(), should_succeed);
+        println!("VPR_CHILD_PERSONA_TRANSACTION_PROBE_OK");
     }
 
     #[test]
@@ -146,9 +147,21 @@ mod tests {
         assert!(output.status.success(),
             "other process entered locked canonical record: {}",
             String::from_utf8_lossy(&output.stderr));
+        assert!(String::from_utf8_lossy(&output.stdout)
+            .contains("VPR_CHILD_PERSONA_TRANSACTION_PROBE_OK"),
+            "the child lock probe must actually execute");
         drop(held);
-        // A fresh transaction is available after the first guard is released.
-        assert!(begin_for_path(&path).is_ok());
+        // An independent process must also be able to enter after release.
+        let resumed = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("persona_transaction::tests::child_transaction_lock_probe")
+            .arg("--nocapture")
+            .env("VPR_TEST_CHILD_PERSONA_LOCK", &path)
+            .env("VPR_TEST_CHILD_LOCK_RELEASED", "1")
+            .output().unwrap();
+        assert!(resumed.status.success());
+        assert!(String::from_utf8_lossy(&resumed.stdout)
+            .contains("VPR_CHILD_PERSONA_TRANSACTION_PROBE_OK"));
         let mut name = path.as_os_str().to_os_string();
         name.push(".transaction.lock");
         let _ = fs::remove_file(PathBuf::from(name));
