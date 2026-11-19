@@ -12,6 +12,7 @@ use crate::owner_context::{
     durable_snapshot_from_reviewed_profile,
 };
 use crate::persona_file_io;
+use crate::persona_transaction;
 use crate::rt1_workspace::OwnerWorkspaceRecord;
 use crate::state::OwnerLabEngine;
 
@@ -138,6 +139,7 @@ pub(crate) fn load_reviewed_persona() -> Result<Option<DurableReviewedOwnerConte
 
     #[cfg(windows)]
     {
+        let _transaction = persona_transaction::begin()?;
         platform::load()
     }
 
@@ -160,6 +162,7 @@ pub(crate) fn save_reviewed_persona(
 
     #[cfg(windows)]
     {
+        let _transaction = persona_transaction::begin()?;
         platform::save(snapshot)
     }
 
@@ -236,6 +239,9 @@ fn explicit_store_path() -> Option<PathBuf> {
 }
 
 fn load_file(path: &Path) -> Result<Option<DurableReviewedOwnerContextSnapshot>, String> {
+    // A legacy migration is a read-modify-commit and must not race a
+    // workspace publication from another process.
+    let _transaction = persona_transaction::begin_for_path(path)?;
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -243,12 +249,20 @@ fn load_file(path: &Path) -> Result<Option<DurableReviewedOwnerContextSnapshot>,
     };
     let decoded = decode_persisted(&raw)?;
     if decoded.migrated_legacy {
-        save_file(path, &decoded.snapshot)?;
+        save_file_unlocked(path, &decoded.snapshot)?;
     }
     Ok(Some(decoded.snapshot))
 }
 
 fn save_file(path: &Path, snapshot: &DurableReviewedOwnerContextSnapshot) -> Result<(), String> {
+    let _transaction = persona_transaction::begin_for_path(path)?;
+    save_file_unlocked(path, snapshot)
+}
+
+fn save_file_unlocked(
+    path: &Path,
+    snapshot: &DurableReviewedOwnerContextSnapshot,
+) -> Result<(), String> {
     let previous = persona_file_io::read_raw(path)?;
     let record = PersistedPersonaV2::reconciled(snapshot.clone(), previous.as_deref())?;
     let raw =
