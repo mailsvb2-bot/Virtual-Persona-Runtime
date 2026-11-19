@@ -7,7 +7,10 @@ umask 077
 die() { printf 'RT1 GPU acceptance BLOCKED: %s\n' "$*" >&2; exit 2; }
 for key in RT1_VIDEO_RENDERER RT1_MUSETALK_ROOT RT1_MUSETALK_AVATAR_DIR \
   RT1_MUSETALK_SOURCE_REVISION RT1_MUSETALK_AVATAR_SHA256 \
-  RT1_MUSETALK_MODELS_SHA256 RT1_MUSETALK_PERSONA_ID RT1_MUSETALK_PERSONA_VERSION
+  RT1_MUSETALK_MODELS_SHA256 RT1_MUSETALK_ENVIRONMENT_SHA256 \
+  RT1_MUSETALK_PERSONA_ID RT1_MUSETALK_PERSONA_VERSION \
+  RT1_MUSETALK_WHEELHOUSE_DIR RT1_MUSETALK_WHEELHOUSE_MANIFEST \
+  RT1_MUSETALK_WHEELHOUSE_MANIFEST_SHA256
 do
   [[ -n "${!key:-}" ]] || die "missing $key"
 done
@@ -22,6 +25,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 [[ -f "$SCRIPT_DIR/rt1_musetalk_gpu_acceptance.py" ]] || die "GPU acceptance entrypoint missing"
 [[ -f "$SCRIPT_DIR/rt1_musetalk_offline_preflight.py" ]] || die "offline preflight missing"
 [[ -f "$SCRIPT_DIR/rt1_musetalk_environment.py" ]] || die "runtime preflight missing"
+[[ -f "$SCRIPT_DIR/rt1_musetalk_wheelhouse.py" ]] || die "wheelhouse preflight missing"
 
 # Evidence must be an operator-approved, non-existing destination.
 [[ "$#" -eq 1 ]] || die "usage: bash scripts/rt1_musetalk_hardware_acceptance.sh /safe/path/new-evidence.json"
@@ -30,8 +34,15 @@ OUT="$1"
 [[ ! -e "$OUT" && ! -L "$OUT" ]] || die "refusing to overwrite existing evidence"
 [[ -d "$(dirname -- "$OUT")" ]] || die "create the evidence directory first; this script will not mutate arbitrary parent paths"
 
+printf 'Checking independently approved wheelhouse bytes (no installers or CUDA)\n'
+python "$SCRIPT_DIR/rt1_musetalk_wheelhouse.py" \
+  --wheelhouse "$RT1_MUSETALK_WHEELHOUSE_DIR" \
+  --manifest "$RT1_MUSETALK_WHEELHOUSE_MANIFEST" \
+  --approved-manifest-sha256 "$RT1_MUSETALK_WHEELHOUSE_MANIFEST_SHA256"
+
 printf 'Checking pinned Python environment (no GPU model execution)\n'
-python "$SCRIPT_DIR/rt1_musetalk_environment.py"
+python "$SCRIPT_DIR/rt1_musetalk_environment.py" \
+  --approved-snapshot-sha256 "$RT1_MUSETALK_ENVIRONMENT_SHA256"
 printf 'Checking approved MuseTalk source, avatar and weights (no CUDA execution)\n'
 python "$SCRIPT_DIR/rt1_musetalk_offline_preflight.py" \
   --root "$RT1_MUSETALK_ROOT" \

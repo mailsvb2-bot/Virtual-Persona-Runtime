@@ -74,6 +74,29 @@ def approved_model_digest(root: str | Path) -> str:
     return digest.hexdigest()
 
 
+def validated_avatar_frame_paths(avatar_dir: str | Path) -> tuple[list[Path], list[Path]]:
+    """Return aligned face/mask frames; reject ambiguous or mismatched sets.
+
+    MuseTalk indexes both arrays with the same frame number. Equal counts
+    alone do not make the mask for a different image safe to use.
+    """
+    avatar = Path(avatar_dir).resolve(strict=True)
+    frames = []
+    for directory in ("full_imgs", "mask"):
+        folder = avatar / directory
+        if folder.is_symlink() or not folder.is_dir():
+            raise RuntimeError("prepared avatar frame directory unavailable")
+        paths = sorted(folder.glob("*.png"))
+        if not paths:
+            raise RuntimeError("prepared avatar frames missing")
+        if any(p.is_symlink() or not p.is_file() or p.stat().st_size == 0 for p in paths):
+            raise RuntimeError("prepared avatar frames must be nonempty regular files")
+        frames.append(paths)
+    if [p.name for p in frames[0]] != [p.name for p in frames[1]]:
+        raise RuntimeError("prepared avatar face and mask filenames differ")
+    return frames[0], frames[1]
+
+
 def prepared_avatar_digest(avatar_dir: str | Path) -> str:
     """Digest exactly the prepared face data consumed by this renderer.
 
@@ -83,14 +106,9 @@ def prepared_avatar_digest(avatar_dir: str | Path) -> str:
     """
     avatar = Path(avatar_dir).resolve(strict=True)
     paths = [avatar / name for name in ("latents.pt", "coords.pkl", "mask_coords.pkl")]
-    for directory in ("full_imgs", "mask"):
-        folder = avatar / directory
-        if folder.is_symlink() or not folder.is_dir():
-            raise RuntimeError("prepared avatar frame directory unavailable")
-        frames = sorted(folder.glob("*.png"))
-        if not frames:
-            raise RuntimeError("prepared avatar frames missing")
-        paths.extend(frames)
+    full_imgs, masks = validated_avatar_frame_paths(avatar)
+    paths.extend(full_imgs)
+    paths.extend(masks)
     digest = hashlib.sha256(b"VPR-MuseTalk-prepared-avatar-v1\\0")
     for path in sorted(paths, key=lambda candidate: candidate.relative_to(avatar).as_posix()):
         if path.is_symlink() or not path.is_file():
@@ -168,10 +186,9 @@ class MuseTalkRenderer:
         )
         if any(not p.is_file() for p in required):
             raise RuntimeError("MuseTalk weights or prepared avatar assets missing")
-        if not list((avatar / "full_imgs").glob("*.png")):
-            raise RuntimeError("MuseTalk avatar image frames missing")
-        if not list((avatar / "mask").glob("*.png")):
-            raise RuntimeError("MuseTalk avatar masks missing")
+        # Keep one frame-order contract for the offline preflight, digest and
+        # CUDA renderer. The face and mask arrays must align by filename.
+        full_imgs, masks = validated_avatar_frame_paths(avatar)
         # The operator-approved digest is an independent deployment secret/
         # configuration value, never computed from a visitor-supplied path.
         # Fail before importing CUDA or deserializing trusted-only pickle data.
@@ -189,7 +206,11 @@ class MuseTalkRenderer:
         verify_upstream_source(
             root_path, os.environ.get("RT1_MUSETALK_SOURCE_REVISION", "")
         )
-        # Load only after local path, weights and CUDA checks. No implicit downloads.
+        # An independently approved full installed-distribution fingerprint is
+        # required before any GPU imports or deserialization of avatar assets.
+        from rt1_musetalk_environment import verify_approved_environment
+        verify_approved_environment(os.environ.get("RT1_MUSETALK_ENVIRONMENT_SHA256"))
+        # Load only after local path, weights and dependency approval checks.
         import torch
         if not torch.cuda.is_available() or gpu_id >= torch.cuda.device_count() or gpu_id < 0:
             raise RuntimeError("CUDA GPU unavailable")
@@ -198,7 +219,6 @@ class MuseTalkRenderer:
         from musetalk.utils.utils import load_all_model
         from musetalk.utils.audio_processor import AudioProcessor
         from musetalk.utils.preprocessing import read_imgs
-        import glob
         import pickle
 
         device = torch.device(f"cuda:{gpu_id}")
@@ -227,8 +247,8 @@ class MuseTalkRenderer:
             self._coords = pickle.load(handle)
         with (avatar / "mask_coords.pkl").open("rb") as handle:
             self._mask_coords = pickle.load(handle)
-        self._images = read_imgs(sorted(glob.glob(str(avatar / "full_imgs/*.png"))))
-        self._masks = read_imgs(sorted(glob.glob(str(avatar / "mask/*.png"))))
+        self._images = read_imgs([str(path) for path in full_imgs])
+        self._masks = read_imgs([str(path) for path in masks])
         count = len(self._latents)
         if not count or any(len(x) != count for x in (
             self._coords, self._mask_coords, self._images, self._masks

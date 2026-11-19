@@ -26,8 +26,11 @@ class GpuAcceptanceEvidenceContract(unittest.TestCase):
             with self.subTest(durations=durations):
                 with self.assertRaises(ValueError):
                     evaluate_windows(durations, max_window_ms=400)
+        for deadline in (0, -1, float("nan"), float("inf"), float("-inf"), True):
+            with self.subTest(deadline=deadline), self.assertRaises(ValueError):
+                evaluate_windows([100], max_window_ms=deadline)
         with self.assertRaises(ValueError):
-            evaluate_windows([100], max_window_ms=0)
+            evaluate_windows([True, 100], max_window_ms=400)
 
 
 if __name__ == "__main__":

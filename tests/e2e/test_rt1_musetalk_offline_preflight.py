@@ -125,6 +125,16 @@ class OfflinePreflightTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "symlinked MuseTalk model"):
                 approved_model_digest(root)
 
+    def test_mismatched_equal_count_face_masks_fail_before_cuda(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, avatar = self.fixture(temp)
+            (avatar / "mask/0001.png").rename(avatar / "mask/0002.png")
+            with patch("subprocess.check_output", side_effect=[REV, ""]):
+                with self.assertRaisesRegex(RuntimeError, "filenames differ"):
+                    preflight.inspect(root, avatar, revision=REV,
+                                      digest="0" * 64,
+                                      models_digest=approved_model_digest(root))
+
     def test_missing_vae_fails(self):
         with tempfile.TemporaryDirectory() as temp:
             root, avatar = self.fixture(temp)

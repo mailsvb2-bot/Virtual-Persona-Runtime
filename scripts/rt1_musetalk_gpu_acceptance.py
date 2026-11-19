@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import statistics
@@ -28,10 +29,14 @@ def evaluate_windows(latencies_ms: list[float], *, max_window_ms: float) -> dict
     Real browser A/V offset, WebRTC tracks and STOP still need separate
     independently verified release evidence.
     """
-    if not latencies_ms or any(not 0 < ms < float("inf") for ms in latencies_ms):
-        raise ValueError("positive measured inference samples required")
-    if max_window_ms <= 0:
-        raise ValueError("invalid inference deadline")
+    if (not latencies_ms or any(
+        isinstance(ms, bool) or not isinstance(ms, (int, float))
+        or not math.isfinite(ms) or ms <= 0 for ms in latencies_ms
+    )):
+        raise ValueError("positive finite measured inference samples required")
+    if (isinstance(max_window_ms, bool) or not isinstance(max_window_ms, (int, float))
+            or not math.isfinite(max_window_ms) or max_window_ms <= 0):
+        raise ValueError("positive finite inference deadline required")
     mean_ms = statistics.mean(latencies_ms)
     p95_ms = sorted(latencies_ms)[max(0, (95 * len(latencies_ms) + 99) // 100 - 1)]
     return {
