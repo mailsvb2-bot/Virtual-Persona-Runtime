@@ -17,6 +17,7 @@ pub(crate) struct PersonaTransaction {
 
 /// A short, read-modify-commit transaction on the currently selected Persona.
 /// The caller must NOT perform network/provider I/O while holding this guard.
+#[cfg(windows)]
 pub(crate) fn begin() -> Result<PersonaTransaction, String> {
     let path = std::env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH")
         .filter(|value| !value.is_empty())
