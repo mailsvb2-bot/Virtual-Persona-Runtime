@@ -116,7 +116,7 @@ def draft_manifest(wheelhouse: Path, output: Path) -> dict:
         size, digest = _wheel_digest(path)
         wheels.append({"filename": path.name, "size": size, "sha256": digest})
     payload = {"schema": SCHEMA, "python": "3.10", "wheels": wheels}
-    raw = (json.dumps(payload, sort_keys=True, indent=2) + "\\n").encode("utf-8")
+    raw = (json.dumps(payload, sort_keys=True, indent=2) + "\n").encode("utf-8")
     # Exclusive creation preserves earlier reviewed evidence.
     with output.open("xb") as handle:
         handle.write(raw)
