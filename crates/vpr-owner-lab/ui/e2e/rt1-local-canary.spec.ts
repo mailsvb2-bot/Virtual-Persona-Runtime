@@ -85,8 +85,14 @@ test("RT1 refuses a public visitor invite when only diagnostic video transport i
   await page.locator("#owner-token").fill("another-owner-token");
   // Returning to the same token must not authorize the stale response.
   await page.locator("#owner-token").fill(ownerToken);
+  const publishResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/api/rt1/owner/publish") && response.request().method() === "POST",
+  );
   releasePublish();
-  await expect(page.locator("#publish")).toBeEnabled();
+  await publishResponse;
+  // Switching credentials invalidates the canonical owner snapshot. The
+  // publish button must stay disabled until an explicit owner refresh.
+  await expect(page.locator("#publish")).toBeDisabled();
   await expect(page.locator("#invite-token")).toHaveValue("");
   await expect(page.locator("#invite-link")).toHaveValue("");
   await expect(page.locator("#copy-invite")).toBeDisabled();
