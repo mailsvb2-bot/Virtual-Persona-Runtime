@@ -77,6 +77,24 @@ impl VisitorSessionManager {
         }
     }
 
+    /// Refuse missing, revoked, or expired visitor authority before creating
+    /// provider adapters or assembling a dedicated conversation engine.
+    /// This is a read-only preflight, never an egress grant: open() still
+    /// atomically re-admits the visitor immediately before remote CREATE.
+    ///
+    /// # Errors
+    /// Denies an invalid publication, stale visitor secret or full capacity.
+    pub fn preflight_visitor(&self, visitor_token: &str) -> Result<(), String> {
+        self.workspace.admit_visitor_turn(
+            visitor_token,
+            crate::rt1_workspace_service::server_now_millis()?,
+        )?;
+        if self.sessions.lock().len() >= MAX_ACTIVE_VISITORS {
+            return Err("visitor session capacity reached".into());
+        }
+        Ok(())
+    }
+
     /// # Errors
     /// Rejects invalid publication authority, full capacity, or entropy failure.
     pub fn open(
