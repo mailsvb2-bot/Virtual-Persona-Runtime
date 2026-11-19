@@ -34,6 +34,12 @@ OUT="$1"
 [[ ! -e "$OUT" && ! -L "$OUT" ]] || die "refusing to overwrite existing evidence"
 [[ -d "$(dirname -- "$OUT")" ]] || die "create the evidence directory first; this script will not mutate arbitrary parent paths"
 
+printf 'Checking independently approved wheelhouse bytes (no installers or CUDA)\n'
+python "$SCRIPT_DIR/rt1_musetalk_wheelhouse.py" \
+  --wheelhouse "$RT1_MUSETALK_WHEELHOUSE_DIR" \
+  --manifest "$RT1_MUSETALK_WHEELHOUSE_MANIFEST" \
+  --approved-manifest-sha256 "$RT1_MUSETALK_WHEELHOUSE_MANIFEST_SHA256"
+
 printf 'Checking pinned Python environment (no GPU model execution)\n'
 python "$SCRIPT_DIR/rt1_musetalk_environment.py" \
   --approved-snapshot-sha256 "$RT1_MUSETALK_ENVIRONMENT_SHA256"
