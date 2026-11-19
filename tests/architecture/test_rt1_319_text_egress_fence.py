@@ -200,12 +200,15 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
         manager = (OWNER / "rt1_visitor_session_manager.rs").read_text(encoding="utf-8")
         session = (OWNER / "rt1_visitor_session.rs").read_text(encoding="utf-8")
         self.assertIn("self.change_publication_and_collect(", workspace)
-        self.assertIn("let _transaction = self.transaction.lock();", workspace)
+        self.assertIn("let _transaction = persona_transaction::begin_workspace(self.transaction)?;", workspace)
+        fence = (OWNER / "persona_transaction.rs").read_text(encoding="utf-8")
+        self.assertIn("fs2::FileExt::try_lock_exclusive(&file)", fence)
+        self.assertIn("let local = mutex.lock();", fence)
         self.assertIn("pub(crate) fn admit_visitor_provider_egress", workspace)
         admission = workspace.split("pub(crate) fn admit_visitor_provider_egress", 1)[1].split(
             "/// Invalidate all pre-crash", 1
         )[0]
-        self.assertIn("let _transaction = self.transaction.lock();", admission)
+        self.assertIn("let _transaction = persona_transaction::begin_workspace(self.transaction)?;", admission)
         self.assertIn("workspace.authorize_visitor(", admission)
         self.assertIn("register()", admission)
         self.assertNotIn(".text_turn(", admission)
