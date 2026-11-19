@@ -73,13 +73,28 @@ class EnvironmentContract(unittest.TestCase):
                    return_value={"issues": []}), patch(
             "rt1_musetalk_environment.environment_snapshot",
             return_value=example,
-        ):
+        ), patch("rt1_musetalk_environment.subprocess.run") as pip_check:
             self.assertEqual(verify_approved_environment(example["sha256"]),
                              example["sha256"])
+            pip_check.assert_called_once()
             with self.assertRaisesRegex(RuntimeError, "differs"):
                 verify_approved_environment("0" * 64)
             with self.assertRaisesRegex(RuntimeError, "approval required"):
                 verify_approved_environment(None)
+
+    def test_broken_installed_dependency_graph_is_not_approved(self):
+        import subprocess
+        example = environment_snapshot(
+            python_version=(3, 10), packages=[("torch", "2.0.1")]
+        )
+        with patch("rt1_musetalk_environment.audit",
+                   return_value={"issues": []}), patch(
+            "rt1_musetalk_environment.environment_snapshot",
+            return_value=example,
+        ), patch("rt1_musetalk_environment.subprocess.run",
+                 side_effect=subprocess.CalledProcessError(1, ["pip", "check"])):
+            with self.assertRaisesRegex(RuntimeError, "dependency graph"):
+                verify_approved_environment(example["sha256"])
 
     def test_invalid_direct_dependencies_cannot_be_approved_by_snapshot(self):
         example = environment_snapshot(
