@@ -239,6 +239,9 @@ fn stale_provider_admission_revokes_existing_transport_exactly_once() {
 #[test]
 fn no_visitor_session_without_canonical_publication() {
     let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
+    // Preflight must fail without allocating a managed visitor or provider.
+    assert!(manager.preflight_visitor(&"0".repeat(64)).is_err());
+    assert_eq!(manager.active_count(), 0);
     assert!(manager.open("0".repeat(64), || {}).is_err());
     assert_eq!(manager.active_count(), 0);
     assert!(manager.authorize("not-a-session").is_err());
