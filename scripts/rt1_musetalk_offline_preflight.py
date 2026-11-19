@@ -15,7 +15,7 @@ import sys
 
 from rt1_musetalk_renderer import (
     REQUIRED_MODEL_FILES, approved_model_digest, prepared_avatar_digest,
-    verify_upstream_source,
+    validated_avatar_frame_paths, verify_upstream_source,
 )
 
 APIS = {
@@ -93,9 +93,8 @@ def inspect(root: Path, avatar: Path, *, revision: str, digest: str,
     actual_digest = prepared_avatar_digest(avatar)
     if actual_digest != digest:
         raise ValueError("prepared avatar does not match independently approved digest")
-    count = len(list((avatar / "full_imgs").glob("*.png")))
-    if count != len(list((avatar / "mask").glob("*.png"))):
-        raise ValueError("prepared full image and mask frame counts differ")
+    full_imgs, _masks = validated_avatar_frame_paths(avatar)
+    count = len(full_imgs)
     return {
         "schema": "vpr.rt1.offline-gpu-preflight.v1",
         "upstream_revision": revision,
