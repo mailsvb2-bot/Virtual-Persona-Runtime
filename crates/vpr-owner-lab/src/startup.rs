@@ -93,7 +93,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .ok_or("owner-lab internal HTTP listener is not TCP")?;
     println!("VPR Owner Lab: http://{address}");
     if http_rt1::enabled() {
-        http_rt1::spawn_cleanup_reconciler(&state);
+        http_rt1::spawn_cleanup_reconciler(&state)?;
     }
     if !egress_enabled {
         println!("External provider egress is disabled until VPR_OWNER_LAB_ALLOW_EGRESS=true");

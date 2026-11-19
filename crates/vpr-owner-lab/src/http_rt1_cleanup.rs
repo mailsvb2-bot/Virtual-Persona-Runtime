@@ -56,23 +56,28 @@ impl Rt1HttpState {
 
 /// A single bounded cleanup worker for the lifetime of the local owner lab.
 /// Unknown STOP outcomes retain their retry handles and cannot claim success.
-pub(crate) fn spawn_cleanup_reconciler(state: &Arc<AppState>) {
+pub(crate) fn spawn_cleanup_reconciler(state: &Arc<AppState>) -> std::io::Result<()> {
     let wake = Arc::clone(&state.rt1.cleanup_notify);
     let state = Arc::downgrade(state);
-    std::thread::spawn(move || {
-        loop {
-            // Capture the generation before reconciling so a concurrent revoke
-            // cannot be lost between the STOP attempt and the bounded wait.
-            let (sequence, ready) = &*wake;
-            let before = *sequence.lock();
-            let Some(state) = state.upgrade() else {
-                break;
-            };
-            state.rt1.reconcile_remote_stops();
-            let mut observed = sequence.lock();
-            if *observed == before {
-                ready.wait_for(&mut observed, std::time::Duration::from_secs(2));
+    std::thread::Builder::new()
+        .name("vpr-rt1-stop-reconciler".into())
+        .spawn(move || {
+            loop {
+                // Capture the generation before reconciling so a concurrent revoke
+                // cannot be lost between the STOP attempt and the bounded wait.
+                let (sequence, ready) = &*wake;
+                let before = *sequence.lock();
+                let Some(state) = state.upgrade() else {
+                    break;
+                };
+                state.rt1.reconcile_remote_stops();
+                let mut observed = sequence.lock();
+                if *observed == before {
+                    ready.wait_for(&mut observed, std::time::Duration::from_secs(2));
+                }
             }
-        }
-    });
+        })?;
+    // No HTTP listener may serve RT1 if its only STOP retry worker failed
+    // to start. The caller propagates this error during startup.
+    Ok(())
 }
