@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from rt1_musetalk_environment import REQUIRED, audit
+from rt1_musetalk_environment import REQUIRED, audit, environment_snapshot, verify_approved_environment
 
 
 def installed_exact(package):
@@ -42,6 +42,56 @@ class EnvironmentContract(unittest.TestCase):
             return "2.0.1+cu118" if package == "torch" else installed_exact(package)
         self.assertTrue(audit(python_version=(3, 10),
                               installed=packages)["dependencies_match_upstream"])
+
+    def test_snapshot_deterministic_and_canonical_distribution_names(self):
+        first = environment_snapshot(
+            python_version=(3, 10),
+            packages=[("Torch_Vision", "0.15.2"), ("torch", "2.0.1+cu118")],
+        )
+        second = environment_snapshot(
+            python_version=(3, 10),
+            packages=[("torch", "2.0.1+cu118"), ("torch-vision", "0.15.2")],
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(
+            [p["name"] for p in first["packages"]], ["torch", "torch-vision"]
+        )
+        self.assertRegex(first["sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(first["python"], "3.10")
+
+    def test_snapshot_rejects_ambiguous_or_empty_distribution_sets(self):
+        for packages in ([], [("torch", "1"), ("Torch", "2")], [(None, "2")],
+                         [("strange name", "1")], [("torch", "")]):
+            with self.subTest(packages=packages), self.assertRaises(ValueError):
+                environment_snapshot(python_version=(3, 10), packages=packages)
+
+    def test_approved_snapshot_rejects_missing_and_drifted_pin(self):
+        example = environment_snapshot(
+            python_version=(3, 10), packages=[("torch", "2.0.1")]
+        )
+        with patch("rt1_musetalk_environment.audit",
+                   return_value={"issues": []}), patch(
+            "rt1_musetalk_environment.environment_snapshot",
+            return_value=example,
+        ):
+            self.assertEqual(verify_approved_environment(example["sha256"]),
+                             example["sha256"])
+            with self.assertRaisesRegex(RuntimeError, "differs"):
+                verify_approved_environment("0" * 64)
+            with self.assertRaisesRegex(RuntimeError, "approval required"):
+                verify_approved_environment(None)
+
+    def test_invalid_direct_dependencies_cannot_be_approved_by_snapshot(self):
+        example = environment_snapshot(
+            python_version=(3, 10), packages=[("torch", "2.0.1")]
+        )
+        with patch("rt1_musetalk_environment.audit",
+                   return_value={"issues": ["torch: not approved"]}), patch(
+            "rt1_musetalk_environment.environment_snapshot",
+            return_value=example,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "dependencies"):
+                verify_approved_environment(example["sha256"])
 
     def test_unsupported_aiortc_release_rejected(self):
         def packages(package):
