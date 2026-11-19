@@ -69,7 +69,7 @@ class WheelhouseContract(unittest.TestCase):
     def test_wrong_manifest_approval_and_duplicate_lock_entries_are_denied(self):
         with tempfile.TemporaryDirectory() as base:
             root, manifest, approved, wheel = self.fixture(base)
-            with self.assertRaisesRegex(ValueError, "independent approval"):
+            with self.assertRaisesRegex(ValueError, "independent wheelhouse manifest SHA-256 approval required"):
                 verify_wheelhouse(root, manifest, "")
             with self.assertRaisesRegex(ValueError, "differs from independent"):
                 verify_wheelhouse(root, manifest, "0" * 64)
