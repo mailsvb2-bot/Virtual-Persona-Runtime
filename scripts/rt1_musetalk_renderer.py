@@ -493,6 +493,10 @@ class _MuseTalkVideoTrack:
                 if self._failed is not None or not renderer.ready():
                     raise MediaStreamError
                 pts, time_base = await self.next_timestamp()
+                # STOP can arrive while pacing the next 25 fps frame.
+                # Never release an already-revoked image after that await.
+                if self.readyState != "live" or self._stop.is_set():
+                    raise MediaStreamError
                 try:
                     self._current = self._frames.get_nowait()
                 except queue.Empty:

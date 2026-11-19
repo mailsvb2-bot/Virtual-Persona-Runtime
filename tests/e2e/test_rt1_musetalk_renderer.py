@@ -129,6 +129,30 @@ class MuseTalkRtpTimingTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(track.wait_quiesced(1.0))
 
 
+    async def test_stop_during_frame_pacing_never_releases_late_video(self):
+        import numpy as np
+        from aiortc.mediastreams import MediaStreamError
+
+        class PreparedAvatar:
+            _prepare_sample = np.zeros((48, 64, 3), dtype=np.uint8)
+
+            def ready(self):
+                return True
+
+        track = model._MuseTalkVideoTrack(PreparedAvatar(), "stop-race", 1)
+        try:
+            await track.recv()  # Establish the frame clock.
+            pending = asyncio.create_task(track.recv())
+            await asyncio.sleep(0.005)  # Second frame is paced for 40 ms.
+            self.assertFalse(pending.done())
+            track.stop()
+            with self.assertRaises(MediaStreamError):
+                await asyncio.wait_for(pending, timeout=1.0)
+        finally:
+            track.stop()
+            self.assertTrue(track.wait_quiesced(1.0))
+
+
 class MuseTalkPcmWindowTest(unittest.TestCase):
     def _track(self):
         import numpy as np
