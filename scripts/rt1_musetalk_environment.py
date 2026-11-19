@@ -12,6 +12,7 @@ import hmac
 from importlib import metadata
 import json
 import re
+import subprocess
 import sys
 
 PYTHON = (3, 10)
@@ -132,6 +133,16 @@ def verify_approved_environment(expected_digest):
         raise RuntimeError("MuseTalk installed distribution inventory invalid") from error
     if not hmac.compare_digest(expected_digest, actual):
         raise RuntimeError("MuseTalk installed distribution snapshot differs from approved pin")
+    # A pinned inventory is not proof that the installed dependency metadata is
+    # internally compatible. Check the resolver's own dependency requirements
+    # before any import of CUDA/model code, including direct worker startup.
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "check"], check=True,
+            capture_output=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError("MuseTalk installed dependency graph failed pip check") from error
     return actual
 
 
