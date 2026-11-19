@@ -37,6 +37,25 @@ def locked_requirements(wheelhouse: Path, manifest: Path, approved_sha256: str):
     return evidence, "\n".join(lines) + "\n"
 
 
+def isolated_install_environment() -> dict[str, str]:
+    """Prevent caller pip/Python configuration from redirecting wheel writes.
+
+    In particular PIP_TARGET, PIP_PREFIX, PIP_USER and inherited pip.conf
+    cannot override the explicitly created private virtual environment.
+    """
+    clean = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith(("PIP_", "PYTHON"))
+        and key not in ("VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV")
+    }
+    # A /dev/null pip config suppresses global, user and site configuration
+    # without relying on pip's --isolated flag interpreting it as an env var.
+    clean["PIP_CONFIG_FILE"] = os.devnull
+    clean["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
+    clean["PYTHONNOUSERSITE"] = "1"
+    return clean
+
+
 def check_python310(executable: Path) -> None:
     """Use the exact interpreter chosen by the operator, not PATH python."""
     if not executable.is_absolute() or not executable.is_file():
@@ -45,6 +64,7 @@ def check_python310(executable: Path) -> None:
         [str(executable), "-I", "-c",
          "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
         capture_output=True, text=True, check=True, timeout=20,
+        env=isolated_install_environment(),
     )
     if result.stdout.strip() != "3.10":
         raise ValueError("RT1 MuseTalk offline install requires Python 3.10")
@@ -70,28 +90,30 @@ def install_approved(
     # Exclusive reservation makes a concurrent second installer fail before
     # invoking venv/pip; no destructive --clear or --upgrade flags.
     venv.mkdir(mode=0o700)
+    clean_env = isolated_install_environment()
     venv_python = venv / "bin" / "python"
     with tempfile.TemporaryDirectory(prefix="vpr-rt1-wheel-lock-") as tmp:
         lock_file = Path(tmp) / "requirements.txt"
         lock_file.write_text(requirements, encoding="utf-8")
         subprocess.run(
             [str(python_bin), "-m", "venv", str(venv)],
-            check=True, timeout=120,
+            check=True, timeout=120, env=clean_env,
         )
         subprocess.run(
             [str(venv_python), "-m", "pip", "install", "--no-index",
              "--no-deps", "--no-cache-dir", "--require-hashes",
              "-r", str(lock_file)],
-            check=True, timeout=1800,
+            check=True, timeout=1800, env=clean_env,
         )
     subprocess.run(
         [str(venv_python), "-m", "pip", "check"],
-        check=True, timeout=90,
+        check=True, timeout=90, env=clean_env,
     )
     snapshot = subprocess.run(
         [str(venv_python), str(ROOT / "rt1_musetalk_environment.py"),
          "--emit-snapshot"],
         capture_output=True, text=True, check=True, timeout=90,
+        env=clean_env,
     )
     report = json.loads(snapshot.stdout)
     if report.get("issues") or not report.get("environment_snapshot"):
