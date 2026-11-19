@@ -62,6 +62,43 @@ test("RT1 refuses a public visitor invite when only diagnostic video transport i
   await expect(page.locator("#publish")).toBeEnabled();
   await expect(page.locator("#persona-version")).toHaveValue("2");
   await expect(page.locator("#persona-version")).toHaveAttribute("readonly", "");
+  // Browser authority race: a delayed successful publish reply must never
+  // display the former owner's visitor bearer after the key was edited.
+  // This intercepts only the single publication response, not real server
+  // admission/STOP; the diagnostic-video denial remains checked below.
+  let releasePublish!: () => void;
+  const heldPublish = new Promise<void>((resolve) => { releasePublish = resolve; });
+  const testInvite = "b".repeat(64);
+  await page.route("**/api/rt1/owner/publish", async (route) => {
+    await heldPublish;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ visitor_token: testInvite }),
+    });
+  });
+  const publishRequest = page.waitForRequest((request) =>
+    request.url().endsWith("/api/rt1/owner/publish") && request.method() === "POST",
+  );
+  await page.locator("#publish").click();
+  await publishRequest;
+  await page.locator("#owner-token").fill("another-owner-token");
+  // Returning to the same token must not authorize the stale response.
+  await page.locator("#owner-token").fill(ownerToken);
+  const publishResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/api/rt1/owner/publish") && response.request().method() === "POST",
+  );
+  releasePublish();
+  await publishResponse;
+  // Switching credentials invalidates the canonical owner snapshot. The
+  // publish button must stay disabled until an explicit owner refresh.
+  await expect(page.locator("#publish")).toBeDisabled();
+  await expect(page.locator("#invite-token")).toHaveValue("");
+  await expect(page.locator("#invite-link")).toHaveValue("");
+  await expect(page.locator("#copy-invite")).toBeDisabled();
+  await page.unroute("**/api/rt1/owner/publish");
+  await page.locator("#owner-refresh").click();
+  await expect(page.locator("#publish")).toBeEnabled();
   await page.locator("#publish").click();
 
   await expect(page.locator("#status")).toContainText("RT1_VIDEO_RENDERER_UNAVAILABLE", {

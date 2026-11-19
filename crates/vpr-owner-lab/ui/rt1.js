@@ -243,6 +243,7 @@
       throw new Error("Сначала подтвердите ключ владельца и загрузите состояние.");
     }
     const expected = ownerSnapshot.persona_version;
+    const epoch = ownerStatusEpoch;
     if (!Number.isSafeInteger(expected) || expected < 1) {
       throw new Error("Неверная версия Persona.");
     }
@@ -250,12 +251,19 @@
       owner_token: token,
       expected_persona_version: expected
     });
+    // Owner credentials can change while the server processes publication.
+    // A late result belongs to the original owner, not the currently
+    // displayed workspace. Never expose its visitor bearer after a switch
+    // (including switching away and then back to the same owner token).
+    if (epoch !== ownerStatusEpoch || el("owner-token").value.trim() !== token) return;
     const visitorLink = localInviteLink(result.visitor_token);
     el("invite-token").value = result.visitor_token;
     el("invite-link").value = visitorLink;
     el("copy-invite").disabled = false;
     await refreshOwnerStatus();
-    message("Persona опубликована. Отправьте посетителю код приглашения.");
+    if (el("owner-token").value.trim() === token && ownerSnapshotToken === token) {
+      message("Persona опубликована. Отправьте посетителю код приглашения.");
+    }
   }));
 
   el("copy-invite").addEventListener("click", async () => {
