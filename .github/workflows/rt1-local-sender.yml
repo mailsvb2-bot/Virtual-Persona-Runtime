@@ -9,6 +9,7 @@ on:
       - 'scripts/rt1_musetalk_environment.py'
       - 'scripts/rt1_musetalk_gpu_acceptance.py'
       - 'scripts/rt1_musetalk_wheelhouse.py'
+      - 'scripts/rt1_musetalk_clean_install.py'
       - 'scripts/rt1_musetalk_hardware_acceptance.sh'
       - 'scripts/rt1_media_worker_*.py'
       - 'tests/e2e/test_rt1_*.py'
@@ -73,6 +74,7 @@ jobs:
             test_rt1_musetalk_environment.py \
             test_rt1_musetalk_gpu_acceptance.py \
             test_rt1_musetalk_wheelhouse.py \
+            test_rt1_musetalk_clean_install.py \
             test_rt1_webrtc_rtp_revoke.py; do
             python "tests/e2e/$test" -v
           done
