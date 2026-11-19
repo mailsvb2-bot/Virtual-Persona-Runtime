@@ -42,6 +42,30 @@ class Rt1BrowserActions(unittest.TestCase):
                 else:
                     self.assertRegex(js, direct)
 
+    def test_visitor_authority_precedes_provider_and_engine_construction(self):
+        """Unauthorized START must not allocate provider/engine resources."""
+        start = (ROOT / "crates/vpr-owner-lab/src/http_rt1_start.rs").read_text(
+            encoding="utf-8"
+        )
+        manager = (ROOT / "crates/vpr-owner-lab/src/rt1_visitor_session_manager.rs").read_text(
+            encoding="utf-8"
+        )
+        begin = start.index("pub(super) fn visitor_start(")
+        end = start.index("\n}", begin)
+        body = start[begin:end]
+        authority = body.index(".preflight_visitor(&body.visitor_token)")
+        reservation = body.index("reserve_session_identity(state)")
+        provider = body.index("selected_provider_bundle(&session_id)")
+        engine = body.index("engine_bootstrap::assemble(providers, true)")
+        self.assertLess(authority, reservation)
+        self.assertLess(reservation, provider)
+        self.assertLess(provider, engine)
+        self.assertIn("self.workspace.admit_visitor_turn(", manager)
+        # Never remove the authoritative second admission or egress fence.
+        self.assertIn("manager.open_with_fast_revoke(", (
+            ROOT / "crates/vpr-owner-lab/src/rt1_visitor_conversation.rs"
+        ).read_text(encoding="utf-8"))
+
     def test_aiortc_worker_uses_non_trickle_ice(self):
         """The canonical worker embeds ICE in SDP and denies trickle requests."""
         start = (ROOT / "crates/vpr-owner-lab/src/http_rt1_start.rs").read_text(
