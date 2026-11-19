@@ -8,6 +8,7 @@ use serde::Serialize;
 use vpr_policy::publication_lifecycle::{PublicationStatus, VisitorPermit};
 
 use crate::persona_persistence::{PersistedPersonaV2, commit_current_record, load_current_record};
+use crate::persona_transaction::{self, CANONICAL_TRANSACTION};
 use crate::rt1_visitor_session_manager::{PendingVisitorRevocations, VisitorSessionManager};
 use crate::rt1_workspace::OwnerWorkspaceRecord;
 
@@ -19,11 +20,10 @@ pub struct WorkspaceStatus {
     pub publication_status: Option<&'static str>,
 }
 
-/// Serializes all RT1 workspace operations within this process, including
-/// operations issued from independent service instances. File replacement is
-/// not a cross-process compare-and-swap: multiple RT1 writer processes remain
-/// unsupported until durable cross-process serialization is provided.
-static WORKSPACE_TRANSACTION: Mutex<()> = Mutex::new(());
+/// All RT1 workspace operations hold the shared process mutex AND the OS
+/// sibling-file transaction fence across their complete read-modify-commit.
+/// This serializes canonical file writers without replacing the existing
+/// lifetime owner-lab lease or allowing multiple live media runtimes.
 
 /// Service handle referencing the one in-process canonical workspace lock.
 pub struct Rt1WorkspaceService {
@@ -40,7 +40,7 @@ impl Rt1WorkspaceService {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            transaction: &WORKSPACE_TRANSACTION,
+            transaction: &CANONICAL_TRANSACTION,
         }
     }
 
@@ -50,7 +50,7 @@ impl Rt1WorkspaceService {
     /// # Errors
     /// Refuses repeat provisioning, missing Persona and storage failures.
     pub fn provision_owner(&self) -> Result<(String, String), String> {
-        let _transaction = self.transaction.lock();
+        let _transaction = persona_transaction::begin()?;
         let mut record = required_persona()?;
         if record.workspace.is_some() {
             return Err("owner workspace already provisioned".into());
@@ -68,7 +68,7 @@ impl Rt1WorkspaceService {
     /// # Errors
     /// Refuses missing, invalid, or unavailable reviewed Persona storage.
     pub fn current_persona_identity(&self) -> Result<(String, u64), String> {
-        let _transaction = self.transaction.lock();
+        let _transaction = persona_transaction::begin()?;
         let record = required_persona()?;
         if record.snapshot.persona_id.trim().is_empty() || record.snapshot.persona_version == 0 {
             return Err("invalid canonical Persona identity".into());
@@ -82,7 +82,7 @@ impl Rt1WorkspaceService {
     /// # Errors
     /// Denies wrong credentials or missing reviewed Persona.
     pub fn owner_status(&self, owner_token: &str) -> Result<WorkspaceStatus, String> {
-        let _transaction = self.transaction.lock();
+        let _transaction = persona_transaction::begin()?;
         let record = required_persona()?;
         let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
         if !workspace.authenticate_owner(owner_token) {
@@ -114,7 +114,7 @@ impl Rt1WorkspaceService {
         expected_persona_version: u64,
         server_readiness_verified: bool,
     ) -> Result<String, String> {
-        let _transaction = self.transaction.lock();
+        let _transaction = persona_transaction::begin()?;
         let mut record = required_persona()?;
         if record.snapshot.persona_version != expected_persona_version {
             return Err("stale Persona version".into());
@@ -179,7 +179,7 @@ impl Rt1WorkspaceService {
     /// # Errors
     /// Refuses bad token and any non-published Persona.
     pub fn visitor_permit(&self, bearer_token: &str) -> Result<VisitorPermit, String> {
-        let _transaction = self.transaction.lock();
+        let _transaction = persona_transaction::begin()?;
         let record = required_persona()?;
         let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
         workspace.visitor_permit(bearer_token)
@@ -196,7 +196,7 @@ impl Rt1WorkspaceService {
         bearer_token: &str,
         now_millis: u64,
     ) -> Result<VisitorPermit, String> {
-        let _transaction = self.transaction.lock();
+        let _transaction = persona_transaction::begin()?;
         let record = required_persona()?;
         let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
         admit_from_workspace(
@@ -220,7 +220,7 @@ impl Rt1WorkspaceService {
         permit: &VisitorPermit,
         now_millis: u64,
     ) -> Result<(), String> {
-        let _transaction = self.transaction.lock();
+        let _transaction = persona_transaction::begin()?;
         let record = required_persona()?;
         let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
         workspace.authorize_visitor(
@@ -269,7 +269,7 @@ impl Rt1WorkspaceService {
         sender: &std::sync::mpsc::SyncSender<T>,
         fragment: T,
     ) -> Result<(), String> {
-        let _transaction = self.transaction.lock();
+        let _transaction = persona_transaction::begin()?;
         let record = required_persona()?;
         let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
         enqueue_from_workspace(
@@ -295,7 +295,7 @@ impl Rt1WorkspaceService {
         permit: &VisitorPermit,
         register: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, String> {
-        let _transaction = self.transaction.lock();
+        let _transaction = persona_transaction::begin()?;
         let record = required_persona()?;
         let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
         workspace.authorize_visitor(
@@ -314,7 +314,7 @@ impl Rt1WorkspaceService {
     /// # Errors
     /// Fails startup on an unreadable or unwritable publication record.
     pub fn recover_before_listener(&self) -> Result<(), String> {
-        let _transaction = self.transaction.lock();
+        let _transaction = persona_transaction::begin()?;
         let Some(mut record) = load_current_record()? else {
             return Ok(());
         };
@@ -331,7 +331,7 @@ impl Rt1WorkspaceService {
         operation: fn(&mut OwnerWorkspaceRecord, &str) -> Result<(), String>,
         visitors: &VisitorSessionManager,
     ) -> Result<PendingVisitorRevocations, String> {
-        let _transaction = self.transaction.lock();
+        let _transaction = persona_transaction::begin()?;
         let mut record = required_persona()?;
         let workspace = record.workspace.as_mut().ok_or("owner workspace missing")?;
         operation(workspace, owner_token)?;
@@ -347,7 +347,7 @@ impl Rt1WorkspaceService {
         owner_token: &str,
         operation: fn(&mut OwnerWorkspaceRecord, &str) -> Result<(), String>,
     ) -> Result<(), String> {
-        let _transaction = self.transaction.lock();
+        let _transaction = persona_transaction::begin()?;
         let mut record = required_persona()?;
         let workspace = record.workspace.as_mut().ok_or("owner workspace missing")?;
         operation(workspace, owner_token)?;
