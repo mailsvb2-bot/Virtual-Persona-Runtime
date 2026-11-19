@@ -70,7 +70,7 @@ def _validate_wheel_archive(handle) -> None:
                 raise ValueError("wheelhouse WHEEL metadata too large")
             with archive.open(item) as content:
                 wheel_metadata = content.read(65537)
-            if not wheel_metadata.startswith(b"Wheel-Version:"):
+            if not any(line.startswith(b"Wheel-Version: ") for line in wheel_metadata.splitlines()):
                 raise ValueError("wheelhouse WHEEL metadata invalid")
     except (zipfile.BadZipFile, RuntimeError, EOFError) as error:
         raise ValueError("wheelhouse ZIP archive invalid") from error
