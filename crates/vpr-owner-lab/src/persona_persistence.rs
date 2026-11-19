@@ -560,8 +560,10 @@ mod tests {
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
-        assert_eq!(remaining.len(), 2, "staged files must be cleaned up");
+        assert_eq!(remaining.len(), 4, "only committed files and stable transaction locks may remain");
         fs::remove_file(&path).unwrap();
+        fs::remove_file(base.join("reviewed.json.transaction.lock")).unwrap();
+        fs::remove_file(base.join("directory-target.transaction.lock")).unwrap();
         fs::remove_dir(&directory_target).unwrap();
         fs::remove_dir(&base).unwrap();
     }
@@ -583,6 +585,26 @@ mod tests {
             0o600
         );
         fs::remove_file(&path).unwrap();
+        fs::remove_file(base.join("reviewed.json.transaction.lock")).unwrap();
+        fs::remove_dir(&base).unwrap();
+    }
+
+    #[test]
+    fn concurrent_same_version_reviewed_write_must_not_replace_canonical_history() {
+        let base = std::env::temp_dir().join(format!(
+            "vpr-persona-conflict-{}-{}", std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("reviewed.json");
+        let first = sample();
+        save_file(&path, &first).unwrap();
+        let mut competing = first.clone();
+        competing.claims[0].revisions[2].statement = "Conflicting revision".into();
+        assert!(save_file(&path, &competing).is_err());
+        assert_eq!(load_file(&path).unwrap(), Some(first));
+        fs::remove_file(&path).unwrap();
+        fs::remove_file(base.join("reviewed.json.transaction.lock")).unwrap();
         fs::remove_dir(&base).unwrap();
     }
 
