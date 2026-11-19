@@ -110,6 +110,18 @@ fn bind_optional_memory_on_start(
     Ok(())
 }
 
+// A read-only canonical admission before provider/engine allocation. The
+// returned manager is reused by the required second admission at START.
+fn admitted_visitor_manager(
+    token: &str,
+) -> Result<Arc<vpr_owner_lab::VisitorSessionManager>, HttpResponse> {
+    let manager = Rt1OwnerController::new().visitor_sessions();
+    manager
+        .preflight_visitor(token)
+        .map_err(|_| error_response(409, "RT1_VISITOR_ACCESS_DENIED"))?;
+    Ok(manager)
+}
+
 pub(super) fn visitor_start(
     request: &mut tiny_http::Request,
     state: &AppState,
@@ -118,6 +130,7 @@ pub(super) fn visitor_start(
     if !body.consent {
         return Err(error_response(403, "CONSENT_REQUIRED"));
     }
+    let manager = admitted_visitor_manager(&body.visitor_token)?;
     let (session_id, _reservation) = reserve_session_identity(state)?;
     let (providers, worker) = selected_provider_bundle(&session_id)?;
     let mut engine = super::super::engine_bootstrap::assemble(providers, true)
@@ -126,7 +139,6 @@ pub(super) fn visitor_start(
         return Err(error_response(409, "RT1_PERSONA_NOT_REVIEWED"));
     }
     bind_optional_memory_on_start(&mut engine, body.memory_token.as_deref())?;
-    let manager = Rt1OwnerController::new().visitor_sessions();
     let started = if let Some(worker) = worker {
         let retry_id = session_id.clone();
         Rt1VisitorConversation::start_with_verified_worker(
