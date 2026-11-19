@@ -165,6 +165,42 @@ and independently approve the installed-distribution snapshot above.
 Until that real clean installation is verified, the deployment gate remains
 open and production release remains blocked.
 
+## Reproducible offline clean-install candidate (CPU-only)
+
+Once the wheelhouse has been independently reviewed and its manifest SHA-256
+approved, the canonical CPU-only installer can validate the entire locked wheel
+set **without running any command**:
+
+```sh
+python scripts/rt1_musetalk_clean_install.py \
+  --wheelhouse "$RT1_MUSETALK_WHEELHOUSE_DIR" \
+  --manifest "$RT1_MUSETALK_WHEELHOUSE_MANIFEST" \
+  --approved-manifest-sha256 "$RT1_MUSETALK_WHEELHOUSE_MANIFEST_SHA256"
+```
+
+On an **isolated clean-build host** with Python 3.10 already installed,
+explicitly authorize a *new* virtual environment. This command creates only
+the requested previously nonexistent destination, installs each hash-pinned
+local wheel with `--no-index --no-deps --require-hashes`, runs `pip check`,
+then prints the entire installed-distribution fingerprint for separate review.
+
+```sh
+python scripts/rt1_musetalk_clean_install.py \
+  --wheelhouse "$RT1_MUSETALK_WHEELHOUSE_DIR" \
+  --manifest "$RT1_MUSETALK_WHEELHOUSE_MANIFEST" \
+  --approved-manifest-sha256 "$RT1_MUSETALK_WHEELHOUSE_MANIFEST_SHA256" \
+  --python-bin /opt/python310/bin/python3.10 \
+  --venv /srv/new-isolated-vpr-rt1-venv \
+  --execute
+```
+
+The installer does **not** fetch any missing package, silently rewrite the
+approved wheelhouse, reuse an old environment or approve the fingerprint it
+produces. An incomplete install remains blocked and needs a new destination.
+A successful install is not evidence of model/CUDA ABI compatibility, real
+GPU inference, avatar rights, browser A/V sync or dual-track STOP. Those
+remain separate acceptance gates.
+
 ## Prepared face integrity gate
 
 A reviewed Persona ID/version by itself is not proof that the operator's
