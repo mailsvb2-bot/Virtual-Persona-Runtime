@@ -106,9 +106,9 @@ fn store() -> Result<Arc<TextMemory>, HttpResponse> {
     );
     db.check_schema()
         .map_err(|_| error_response(503, "RT1_MEMORY_SCHEMA_UNAVAILABLE"))?;
-    STORE
-        .set(Arc::clone(&db))
-        .map_err(|_| error_response(503, "RT1_MEMORY_DB_UNAVAILABLE"))?;
+    // Do not publish an initialized store until its sole maintenance worker
+    // was successfully spawned. Otherwise a failed thread launch would leave
+    // STORE set forever and future requests would silently skip maintenance.
     let worker = Arc::downgrade(&db);
     std::thread::Builder::new()
         .name("vpr-memory-maintenance".into())
@@ -121,6 +121,9 @@ fn store() -> Result<Arc<TextMemory>, HttpResponse> {
             }
         })
         .map_err(|_| error_response(503, "RT1_MEMORY_WORKER_UNAVAILABLE"))?;
+    STORE
+        .set(Arc::clone(&db))
+        .map_err(|_| error_response(503, "RT1_MEMORY_DB_UNAVAILABLE"))?;
     Ok(db)
 }
 fn workspace_id() -> Result<String, HttpResponse> {
