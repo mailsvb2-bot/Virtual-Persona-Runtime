@@ -67,6 +67,24 @@ class Rt1BrowserActions(unittest.TestCase):
             ROOT / "crates/vpr-owner-lab/src/rt1_visitor_conversation.rs"
         ).read_text(encoding="utf-8"))
 
+    def test_rt1_stop_reconciler_is_required_before_http_listener(self):
+        startup = (ROOT / "crates/vpr-owner-lab/src/startup.rs").read_text(
+            encoding="utf-8"
+        )
+        worker = (ROOT / "crates/vpr-owner-lab/src/http_rt1_cleanup.rs").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("http_rt1::spawn_cleanup_reconciler(&state)?;", startup)
+        self.assertLess(
+            startup.index("http_rt1::spawn_cleanup_reconciler(&state)?;"),
+            startup.index("http_proxy::serve(&listener"),
+        )
+        self.assertIn("pub(crate) fn spawn_cleanup_reconciler(state: &Arc<AppState>) -> std::io::Result<()>", worker)
+        self.assertIn('std::thread::Builder::new()', worker)
+        self.assertIn('.name("vpr-rt1-stop-reconciler".into())', worker)
+        self.assertIn('        })?;', worker)
+        self.assertIn('    Ok(())', worker)
+
     def test_aiortc_worker_uses_non_trickle_ice(self):
         """The canonical worker embeds ICE in SDP and denies trickle requests."""
         start = (ROOT / "crates/vpr-owner-lab/src/http_rt1_start.rs").read_text(
