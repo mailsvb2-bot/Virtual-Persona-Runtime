@@ -118,6 +118,13 @@ pub(super) fn visitor_start(
     if !body.consent {
         return Err(error_response(403, "CONSENT_REQUIRED"));
     }
+    let manager = Rt1OwnerController::new().visitor_sessions();
+    // Fail closed before provider construction and per-visitor engine
+    // allocation. This is a cheap canonical read, NOT an egress permit;
+    // start_with_verified_worker/open() must re-admit after preparation.
+    manager
+        .preflight_visitor(&body.visitor_token)
+        .map_err(|_| error_response(403, "RT1_VISITOR_ACCESS_DENIED"))?;
     let (session_id, _reservation) = reserve_session_identity(state)?;
     let (providers, worker) = selected_provider_bundle(&session_id)?;
     let mut engine = super::super::engine_bootstrap::assemble(providers, true)
@@ -126,7 +133,6 @@ pub(super) fn visitor_start(
         return Err(error_response(409, "RT1_PERSONA_NOT_REVIEWED"));
     }
     bind_optional_memory_on_start(&mut engine, body.memory_token.as_deref())?;
-    let manager = Rt1OwnerController::new().visitor_sessions();
     let started = if let Some(worker) = worker {
         let retry_id = session_id.clone();
         Rt1VisitorConversation::start_with_verified_worker(
