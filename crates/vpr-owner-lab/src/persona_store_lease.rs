@@ -121,3 +121,7 @@ pub fn acquire_persona_store_lease() -> Result<PersonaStoreLease, String> {
     *ACTIVE_LEASE.get_or_init(|| Mutex::new(None)).lock() = Some(Arc::downgrade(&owner));
     Ok(PersonaStoreLease { _owner: Some(owner) })
 }
+
+#[cfg(test)]
+#[path = "persona_store_lease_tests.rs"]
+mod tests;
