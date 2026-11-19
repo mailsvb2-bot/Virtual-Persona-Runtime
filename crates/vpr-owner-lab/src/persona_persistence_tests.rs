@@ -61,8 +61,7 @@ fn v1_migration_preserves_only_known_revision_and_becomes_idempotent_v2() {
         "Единственное известное значение"
     );
 
-    let v2 =
-        serde_json::to_string(&PersistedPersonaV2::new(migrated.snapshot.clone())).unwrap();
+    let v2 = serde_json::to_string(&PersistedPersonaV2::new(migrated.snapshot.clone())).unwrap();
     let decoded_again = decode_persisted(&v2).unwrap();
     assert!(!decoded_again.migrated_legacy);
     assert_eq!(decoded_again.snapshot, migrated.snapshot);
@@ -192,7 +191,11 @@ fn failed_staging_never_truncates_committed_persona() {
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
         .collect();
-    assert_eq!(remaining.len(), 4, "only committed files and stable transaction locks may remain");
+    assert_eq!(
+        remaining.len(),
+        4,
+        "only committed files and stable transaction locks may remain"
+    );
     fs::remove_file(&path).unwrap();
     fs::remove_file(base.join("reviewed.json.transaction.lock")).unwrap();
     fs::remove_file(base.join("directory-target.transaction.lock")).unwrap();
@@ -224,8 +227,12 @@ fn private_reviewed_file_permissions_are_owner_only() {
 #[test]
 fn concurrent_same_version_reviewed_write_must_not_replace_canonical_history() {
     let base = std::env::temp_dir().join(format!(
-        "vpr-persona-conflict-{}-{}", std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        "vpr-persona-conflict-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     fs::create_dir_all(&base).unwrap();
     let path = base.join("reviewed.json");
