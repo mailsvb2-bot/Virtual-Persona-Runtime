@@ -4,7 +4,40 @@
 
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// One stable lock identity for BOTH the lifetime service lease and every
+/// short canonical read-modify-commit. The implicit Windows Credential Manager
+/// record has no file path, so use a private per-user sibling-lock namespace.
+///
+/// # Errors
+/// Fails closed when the implicit Windows per-user lock directory is unavailable.
+pub(crate) fn lock_target() -> Result<Option<PathBuf>, String> {
+    if let Some(path) =
+        env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH").filter(|value| !value.is_empty())
+    {
+        let path = PathBuf::from(path);
+        if path.file_name().is_none() {
+            return Err("reviewed Persona store path must name a file".into());
+        }
+        return Ok(Some(path));
+    }
+    #[cfg(windows)]
+    {
+        let root = env::var_os("LOCALAPPDATA")
+            .or_else(|| env::var_os("APPDATA"))
+            .ok_or_else(|| "Windows Persona lock directory unavailable".to_owned())?;
+        Ok(Some(
+            PathBuf::from(root)
+                .join("Virtual-Persona-Runtime")
+                .join("owner-lab-credential-manager-v2"),
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(None)
+    }
+}
 
 /// Hold this guard for the entire backend lifetime, before loading the Persona.
 pub struct PersonaStoreLease {
@@ -16,12 +49,8 @@ pub struct PersonaStoreLease {
 /// # Errors
 /// Reports that the store is unavailable, rather than permitting a lost update.
 pub fn acquire_persona_store_lease() -> Result<PersonaStoreLease, String> {
-    let Some(store_path) = env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH")
-        .filter(|path| !path.is_empty())
-        .map(std::path::PathBuf::from)
-    else {
-        // The existing Windows Credential Manager path remains unchanged.
-        // On non-Windows platforms saving without an explicit path fails closed.
+    let Some(store_path) = lock_target()? else {
+        // Only the unconfigured non-Windows Owner Lab is ephemeral.
         return Ok(PersonaStoreLease { _file: None });
     };
     let parent = store_path

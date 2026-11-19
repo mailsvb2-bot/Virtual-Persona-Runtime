@@ -5,6 +5,7 @@ mod owner_context;
 mod persona_file_io;
 mod persona_persistence;
 mod persona_store_lease;
+mod persona_transaction;
 mod provider_credentials;
 mod providers;
 mod rt1_owner_controller;
