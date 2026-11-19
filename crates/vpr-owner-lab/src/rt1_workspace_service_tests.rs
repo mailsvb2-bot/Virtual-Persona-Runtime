@@ -255,7 +255,6 @@ fn service_signature_does_not_accept_client_claimed_readiness() {
     assert!(required_persona().is_err());
 }
 
-
 #[test]
 fn buffered_output_rechecks_revocation_even_when_compute_fails() {
     use std::cell::Cell;
@@ -277,7 +276,11 @@ fn buffered_output_rechecks_revocation_even_when_compute_fails() {
             Err("provider computation failed".to_owned())
         },
     );
-    assert_eq!(checks.get(), 2, "failed computations must recheck authority");
+    assert_eq!(
+        checks.get(),
+        2,
+        "failed computations must recheck authority"
+    );
     assert_eq!(result.unwrap_err(), "visitor authorization revoked");
 }
 
