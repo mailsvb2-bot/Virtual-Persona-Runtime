@@ -8,7 +8,7 @@ import unittest
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from rt1_musetalk_wheelhouse import SCHEMA, verify_wheelhouse
+from rt1_musetalk_wheelhouse import SCHEMA, draft_manifest, verify_wheelhouse
 
 
 class WheelhouseContract(unittest.TestCase):
@@ -36,6 +36,23 @@ class WheelhouseContract(unittest.TestCase):
             self.assertFalse(result["cuda_executed"])
             self.assertFalse(result["python_packages_installed"])
             self.assertFalse(result["production_release_approved"])
+
+    def test_draft_manifest_requires_separate_approval_and_roundtrips(self):
+        with tempfile.TemporaryDirectory() as base:
+            root, _manifest, _approved, wheel = self.fixture(base)
+            output = Path(base) / "candidate.json"
+            candidate = draft_manifest(root, output)
+            self.assertFalse(candidate["approved"])
+            self.assertTrue(output.exists())
+            self.assertEqual(
+                candidate["draft_sha256_for_independent_review"],
+                hashlib.sha256(output.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(verify_wheelhouse(
+                root, output, candidate["draft_sha256_for_independent_review"]
+            )["wheel_count"], 1)
+            with self.assertRaisesRegex(ValueError, "overwrite"):
+                draft_manifest(root, output)
 
     def test_modified_wheel_and_unexpected_extra_file_fail_closed(self):
         with tempfile.TemporaryDirectory() as base:
