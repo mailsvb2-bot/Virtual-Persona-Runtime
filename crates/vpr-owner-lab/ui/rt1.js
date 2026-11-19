@@ -873,23 +873,33 @@
       ...requireMemorySession(), memory_token: memoryToken() });
     memoryPrint("Память разрешена и подключена к этой беседе.");
   });
-  memoryAction("memory-disable", async () => {
-    let confirmed = false;
-    try {
-      await api("/api/rt1/visitor/memory/consent", {
-        ...requireMemorySession(), memory_token: memoryToken(), enabled: false });
-      confirmed = true;
-    } finally {
-      // Local STOP on any outcome; remote STOP may remain uncertain.
-      cleanupLocal();
-      sessionId = null;
-      el("send-text").disabled = true;
-      el("speak").disabled = true;
-      el("interrupt").disabled = true;
-      memoryPrint(confirmed
-        ? "Память отключена и заметки удалены. Разговор остановлен."
-        : "Отзыв или удалённая остановка не подтверждены. Локальный разговор заблокирован; проверьте статус на сервере.");
+  // Privacy operations can revoke the canonical visitor while STOP is still
+  // uncertain. Never drop its session ID on an HTTP error: retain /close retry
+  // authority, but fence microphone, text, and all local media immediately.
+  async function privacyStopAction(path, data) {
+    const identity = requireMemorySession();
+    invalidatePendingText();
+    voiceEnabled = false;
+    textDeliveryUncertain = true;
+    cleanupLocal();
+    el("send-text").disabled = true;
+    el("speak").disabled = true;
+    el("interrupt").disabled = true;
+    const receipt = await api(path, { ...identity, memory_token: memoryToken(), ...data });
+    if (receipt.session_stopped !== true) {
+      throw new Error("RT1_MEMORY_REMOTE_STOP_UNCONFIRMED");
     }
+    // Only the canonical server STOP receipt permits dropping retry identity.
+    if (sessionId === identity.session_id) {
+      sessionId = null;
+      textDeliveryUncertain = false;
+    }
+    return receipt;
+  }
+
+  memoryAction("memory-disable", async () => {
+    await privacyStopAction("/api/rt1/visitor/memory/consent", { enabled: false });
+    memoryPrint("Память отключена и заметки удалены. Разговор остановлен.");
   });
   memoryAction("memory-save", async () => {
     const content = el("memory-content").value.trim();
@@ -929,44 +939,19 @@
   });
   memoryAction("memory-erase", async () => {
     if (!window.confirm("Удалить все воспоминания?")) return;
-    try {
-      await api("/api/rt1/visitor/memory/erase", {
-        ...requireMemorySession(), memory_token: memoryToken() });
-    } finally {
-      cleanupLocal();
-      sessionId = null;
-      el("send-text").disabled = true;
-      el("speak").disabled = true;
-      el("interrupt").disabled = true;
-    }
+    await privacyStopAction("/api/rt1/visitor/memory/erase", {});
     memoryPrint("Память удалена и разговор остановлен. Для продолжения подключитесь повторно.");
   });
   memoryAction("memory-revoke", async () => {
     if (!window.confirm("Удалить все воспоминания и навсегда отозвать личный ключ?")) return;
-    try {
-      await api("/api/rt1/visitor/memory/revoke", {
-        ...requireMemorySession(), memory_token: memoryToken() });
-    } finally {
-      cleanupLocal();
-      sessionId = null;
-      el("send-text").disabled = true;
-      el("speak").disabled = true;
-      el("interrupt").disabled = true;
-    }
+    await privacyStopAction("/api/rt1/visitor/memory/revoke", {});
     el("memory-token").value = "";
     memoryPrint("Ключ отозван, память удалена и разговор остановлен. Создайте новую память для следующего сеанса.");
   });
-
   memoryAction("memory-rotate", async () => {
     if (!window.confirm("Заменить личный ключ? Старый ключ немедленно перестанет работать.")) return;
-    const data = await api("/api/rt1/visitor/memory/rotate", {
-      ...requireMemorySession(), memory_token: memoryToken() });
+    const data = await privacyStopAction("/api/rt1/visitor/memory/rotate", {});
     el("memory-token").value = data.memory_token;
-    cleanupLocal();
-    sessionId = null;
-    el("send-text").disabled = true;
-    el("speak").disabled = true;
-    el("interrupt").disabled = true;
     memoryPrint("Ключ заменён. Сохраните его в менеджере паролей и начните новый разговор; старый разговор остановлен.");
   });
 
