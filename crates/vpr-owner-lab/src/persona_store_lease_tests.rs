@@ -40,7 +40,10 @@ fn only_process_holding_canonical_owner_lease_can_admit_live_visitors() {
     let base = std::env::temp_dir().join(format!(
         "vpr-rt1-live-owner-{}-{}",
         std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     fs::create_dir_all(&base).unwrap();
     let path = base.join("persona.json");
@@ -53,7 +56,8 @@ fn only_process_holding_canonical_owner_lease_can_admit_live_visitors() {
         .env("VPR_TEST_LEASE_MARKER", &marker)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn().unwrap();
+        .spawn()
+        .unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
     while !marker.exists() && Instant::now() < deadline {
         if holder.try_wait().unwrap().is_some() {
@@ -76,15 +80,26 @@ fn only_process_holding_canonical_owner_lease_can_admit_live_visitors() {
     };
     let _ = holder.kill(); // Crash recovery: the OS releases the owner lock.
     let _ = holder.wait();
-    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
-    assert!(String::from_utf8_lossy(&result.stdout).contains("test result: ok."),
-        "child contender test did not actually execute");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&result.stdout).contains("test result: ok."),
+        "child contender test did not actually execute"
+    );
     let successor = Command::new(&exe)
         .args(["--exact", CHILD_TEST, "--nocapture"])
         .env("VPR_OWNER_LAB_PERSONA_STORE_PATH", &path)
         .env("VPR_TEST_LEASE_MODE", "successor")
-        .output().unwrap();
-    assert!(successor.status.success(), "{}", String::from_utf8_lossy(&successor.stderr));
+        .output()
+        .unwrap();
+    assert!(
+        successor.status.success(),
+        "{}",
+        String::from_utf8_lossy(&successor.stderr)
+    );
     assert!(String::from_utf8_lossy(&successor.stdout).contains("test result: ok."));
     let _ = fs::remove_file(&marker);
     let _ = fs::remove_file(base.join("persona.json.owner.lock"));
