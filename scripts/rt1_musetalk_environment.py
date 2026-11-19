@@ -7,8 +7,11 @@ This audit does not grant GPU or production readiness.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 from importlib import metadata
 import json
+import re
 import sys
 
 PYTHON = (3, 10)
@@ -77,10 +80,80 @@ def audit(*, python_version=None, installed=None):
     }
 
 
+def environment_snapshot(*, python_version=None, packages=None):
+    """Exact normalized installed-distribution inventory (no imports/CUDA).
+
+    An approved fingerprint must be held outside this environment. Versions
+    alone are not proof of wheel-file contents, package licensing or CUDA ABI.
+    """
+    version = tuple(python_version or sys.version_info[:2])
+    if len(version) != 2 or any(type(v) is not int or v < 0 for v in version):
+        raise ValueError("invalid Python version for environment snapshot")
+    if packages is None:
+        packages = [
+            (dist.metadata.get("Name"), dist.version)
+            for dist in metadata.distributions()
+        ]
+    registry = {}
+    for raw_name, raw_version in packages:
+        if (not isinstance(raw_name, str) or not isinstance(raw_version, str)
+                or not raw_name.strip() or not raw_version.strip()
+                or len(raw_name) > 256 or len(raw_version) > 256):
+            raise ValueError("invalid installed distribution metadata")
+        name = re.sub(r"[-_.]+", "-", raw_name).lower()
+        if re.fullmatch(r"[a-z0-9][a-z0-9-]*", name) is None:
+            raise ValueError("invalid installed distribution name")
+        if name in registry:
+            raise ValueError(f"ambiguous duplicate distribution: {name}")
+        registry[name] = raw_version
+    if not registry:
+        raise ValueError("empty installed distribution inventory")
+    payload = {
+        "schema": "vpr.rt1.python-distribution-snapshot.v1",
+        "python": f"{version[0]}.{version[1]}",
+        "packages": [{"name": name, "version": registry[name]} for name in sorted(registry)],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    payload["sha256"] = hashlib.sha256(encoded).hexdigest()
+    return payload
+
+
+def verify_approved_environment(expected_digest):
+    """Deny unapproved dependency drift before importing any CUDA libraries."""
+    if (not isinstance(expected_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None):
+        raise RuntimeError("RT1_MUSETALK_ENVIRONMENT_SHA256 approval required")
+    report = audit()
+    if report["issues"]:
+        raise RuntimeError("MuseTalk installed Python dependencies do not match approved recipe")
+    try:
+        actual = environment_snapshot()["sha256"]
+    except ValueError as error:
+        raise RuntimeError("MuseTalk installed distribution inventory invalid") from error
+    if not hmac.compare_digest(expected_digest, actual):
+        raise RuntimeError("MuseTalk installed distribution snapshot differs from approved pin")
+    return actual
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.parse_args(argv)
+    parser.add_argument("--emit-snapshot", action="store_true",
+                        help="print exact installed-distribution fingerprint for independent approval")
+    parser.add_argument("--approved-snapshot-sha256",
+                        help="fail unless the entire installed distribution set matches this pin")
+    args = parser.parse_args(argv)
     report = audit()
+    if args.emit_snapshot or args.approved_snapshot_sha256:
+        try:
+            snapshot = environment_snapshot()
+            report["environment_snapshot"] = snapshot
+            if args.approved_snapshot_sha256:
+                verify_approved_environment(args.approved_snapshot_sha256)
+                report["environment_snapshot_approved"] = True
+            else:
+                report["environment_snapshot_approved"] = False
+        except (ValueError, RuntimeError) as error:
+            report["issues"].append(str(error))
     print(json.dumps(report, indent=2, sort_keys=True))
     return 2 if report["issues"] else 0
 
