@@ -16,7 +16,11 @@ pub(crate) fn lock_target() -> Result<Option<PathBuf>, String> {
     if let Some(path) =
         env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH").filter(|value| !value.is_empty())
     {
-        return Ok(Some(PathBuf::from(path)));
+        let path = PathBuf::from(path);
+        if path.file_name().is_none() {
+            return Err("reviewed Persona store path must name a file".into());
+        }
+        return Ok(Some(path));
     }
     #[cfg(windows)]
     {
