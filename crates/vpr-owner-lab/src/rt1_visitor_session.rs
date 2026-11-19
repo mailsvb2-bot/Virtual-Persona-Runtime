@@ -18,6 +18,7 @@ impl Rt1VisitorSession {
         workspace: Arc<Rt1WorkspaceService>,
         bearer_token: String,
     ) -> Result<Self, String> {
+        crate::persona_store_lease::require_live_runtime_owner()?;
         let permit = workspace.admit_visitor_turn(&bearer_token, server_now_millis()?)?;
         Ok(Self {
             workspace,
@@ -44,6 +45,7 @@ impl Rt1VisitorSession {
     /// # Errors
     /// Rejects revoked, expired, or version-stale authority.
     pub fn authorize(&self) -> Result<(), String> {
+        crate::persona_store_lease::require_live_runtime_owner()?;
         self.workspace
             .authorize_visitor(&self.bearer_token, &self.permit, server_now_millis()?)
     }

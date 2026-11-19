@@ -295,6 +295,7 @@ impl Rt1WorkspaceService {
         permit: &VisitorPermit,
         register: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, String> {
+        crate::persona_store_lease::require_live_runtime_owner()?;
         let _transaction = persona_transaction::begin_workspace(self.transaction)?;
         let record = required_persona()?;
         let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;

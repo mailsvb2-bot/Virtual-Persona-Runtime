@@ -85,6 +85,7 @@ impl VisitorSessionManager {
     /// # Errors
     /// Denies an invalid publication, stale visitor secret or full capacity.
     pub fn preflight_visitor(&self, visitor_token: &str) -> Result<(), String> {
+        crate::persona_store_lease::require_live_runtime_owner()?;
         self.workspace.admit_visitor_turn(
             visitor_token,
             crate::rt1_workspace_service::server_now_millis()?,
