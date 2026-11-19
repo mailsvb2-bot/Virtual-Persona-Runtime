@@ -72,6 +72,22 @@ class ModelWeightsPinContract(unittest.TestCase):
                     MuseTalkRenderer(str(root), str(avatar),
                                      persona_id="persona-1", persona_version=1)
 
+    def test_worker_rejects_missing_environment_approval_before_torch(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, avatar = Path(temp) / "root", Path(temp) / "avatar"
+            stage(root, avatar)
+            pins = {
+                "RT1_MUSETALK_AVATAR_SHA256": prepared_avatar_digest(avatar),
+                "RT1_MUSETALK_MODELS_SHA256": approved_model_digest(root),
+                "RT1_MUSETALK_SOURCE_REVISION": "a" * 40,
+            }
+            with patch("pathlib.Path.cwd", return_value=root), patch.dict(
+                os.environ, pins, clear=True,
+            ), patch("subprocess.check_output", side_effect=["a" * 40, ""]):
+                with self.assertRaisesRegex(RuntimeError, "ENVIRONMENT_SHA256 approval required"):
+                    MuseTalkRenderer(str(root), str(avatar),
+                                     persona_id="persona-1", persona_version=1)
+
     def test_live_source_gate_rejects_unpinned_and_changed_checkout(self):
         with tempfile.TemporaryDirectory() as temp:
             root, avatar = Path(temp) / "root", Path(temp) / "avatar"
