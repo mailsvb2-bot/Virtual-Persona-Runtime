@@ -55,12 +55,15 @@ fn begin_with_mutex(
 }
 
 fn acquire_sibling_lock(path: &Path) -> Result<File, String> {
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty())
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).map_err(|_| "Persona transaction directory unavailable")?;
-    let parent = fs::canonicalize(parent)
-        .map_err(|_| "Persona transaction directory unavailable")?;
-    let filename = path.file_name()
+    let parent =
+        fs::canonicalize(parent).map_err(|_| "Persona transaction directory unavailable")?;
+    let filename = path
+        .file_name()
         .ok_or_else(|| "Persona transaction requires a file path".to_owned())?;
     let mut lock_name = filename.to_os_string();
     lock_name.push(".transaction.lock");
@@ -81,11 +84,14 @@ fn acquire_sibling_lock(path: &Path) -> Result<File, String> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let file = options.open(&lock_path)
+    let file = options
+        .open(&lock_path)
         .map_err(|_| "Persona transaction lock inaccessible")?;
-    let opened = file.metadata().map_err(|_| "Persona transaction lock inaccessible")?;
-    let current = fs::symlink_metadata(&lock_path)
+    let opened = file
+        .metadata()
         .map_err(|_| "Persona transaction lock inaccessible")?;
+    let current =
+        fs::symlink_metadata(&lock_path).map_err(|_| "Persona transaction lock inaccessible")?;
     if current.file_type().is_symlink() || !current.is_file() {
         return Err("Persona transaction lock path invalid".into());
     }
@@ -100,8 +106,8 @@ fn acquire_sibling_lock(path: &Path) -> Result<File, String> {
     loop {
         match fs2::FileExt::try_lock_exclusive(&file) {
             Ok(()) => return Ok(file),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
-                && Instant::now() < deadline =>
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
             {
                 std::thread::sleep(Duration::from_millis(20));
             }
@@ -113,8 +119,8 @@ fn acquire_sibling_lock(path: &Path) -> Result<File, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
     use std::path::PathBuf;
+    use std::process::Command;
 
     #[test]
     fn child_transaction_lock_probe() {
@@ -132,7 +138,9 @@ mod tests {
             "vpr-multiprocess-{}-{}.json",
             std::process::id(),
             std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         let held = begin_for_path(&path).unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
@@ -140,13 +148,18 @@ mod tests {
             .arg("persona_transaction::tests::child_transaction_lock_probe")
             .arg("--nocapture")
             .env("VPR_TEST_CHILD_PERSONA_LOCK", &path)
-            .output().unwrap();
-        assert!(output.status.success(),
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
             "other process entered locked canonical record: {}",
-            String::from_utf8_lossy(&output.stderr));
-        assert!(String::from_utf8_lossy(&output.stdout)
-            .contains("VPR_CHILD_PERSONA_TRANSACTION_PROBE_OK"),
-            "the child lock probe must actually execute");
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout)
+                .contains("VPR_CHILD_PERSONA_TRANSACTION_PROBE_OK"),
+            "the child lock probe must actually execute"
+        );
         drop(held);
         // An independent process must also be able to enter after release.
         let resumed = Command::new(std::env::current_exe().unwrap())
@@ -155,10 +168,13 @@ mod tests {
             .arg("--nocapture")
             .env("VPR_TEST_CHILD_PERSONA_LOCK", &path)
             .env("VPR_TEST_CHILD_LOCK_RELEASED", "1")
-            .output().unwrap();
+            .output()
+            .unwrap();
         assert!(resumed.status.success());
-        assert!(String::from_utf8_lossy(&resumed.stdout)
-            .contains("VPR_CHILD_PERSONA_TRANSACTION_PROBE_OK"));
+        assert!(
+            String::from_utf8_lossy(&resumed.stdout)
+                .contains("VPR_CHILD_PERSONA_TRANSACTION_PROBE_OK")
+        );
         let mut name = path.as_os_str().to_os_string();
         name.push(".transaction.lock");
         let _ = fs::remove_file(PathBuf::from(name));
