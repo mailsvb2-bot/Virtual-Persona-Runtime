@@ -79,7 +79,7 @@ impl VisitorSessionManager {
 
     /// Refuse missing, revoked, or expired visitor authority before creating
     /// provider adapters or assembling a dedicated conversation engine.
-    /// This is a read-only preflight, never an egress grant: open() still
+    /// This is a read-only preflight, never an egress grant: `open()` still
     /// atomically re-admits the visitor immediately before remote CREATE.
     ///
     /// # Errors
