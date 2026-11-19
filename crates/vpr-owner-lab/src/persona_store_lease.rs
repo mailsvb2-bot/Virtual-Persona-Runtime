@@ -66,7 +66,9 @@ pub struct PersonaStoreLease {
 pub(crate) fn require_live_runtime_owner() -> Result<(), String> {
     let path = owner_lock_path()?.ok_or("RT1 owner lease required")?;
     let guard = ACTIVE_LEASE.get().ok_or("RT1 owner lease required")?.lock();
-    let owner = guard.as_ref().and_then(Weak::upgrade)
+    let owner = guard
+        .as_ref()
+        .and_then(Weak::upgrade)
         .ok_or("RT1 owner lease required")?;
     if owner.path != path || owner.pid != std::process::id() {
         return Err("RT1 owner lease does not match this process and Persona".into());
@@ -84,7 +86,8 @@ fn owner_lock_path() -> Result<Option<PathBuf>, String> {
         .unwrap_or_else(|| Path::new("."));
     let canonical_parent = fs::canonicalize(parent)
         .map_err(|_| "reviewed Persona lease directory resolution failed")?;
-    let name = store_path.file_name()
+    let name = store_path
+        .file_name()
         .ok_or_else(|| "reviewed Persona store path must name a file".to_owned())?;
     let mut lock_name = name.to_os_string();
     lock_name.push(".owner.lock");
@@ -124,7 +127,9 @@ pub fn acquire_persona_store_lease() -> Result<PersonaStoreLease, String> {
         pid: std::process::id(),
     });
     *ACTIVE_LEASE.get_or_init(|| Mutex::new(None)).lock() = Some(Arc::downgrade(&owner));
-    Ok(PersonaStoreLease { _owner: Some(owner) })
+    Ok(PersonaStoreLease {
+        _owner: Some(owner),
+    })
 }
 
 #[cfg(test)]
