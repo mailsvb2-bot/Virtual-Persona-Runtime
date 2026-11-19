@@ -38,7 +38,24 @@ class PreparedAvatarDigestTest(unittest.TestCase):
             self.assertNotEqual(old, prepared_avatar_digest(avatar))
             changed = prepared_avatar_digest(avatar)
             (avatar / "mask/0002.png").write_bytes(b"unexpected frame")
-            self.assertNotEqual(changed, prepared_avatar_digest(avatar))
+            with self.assertRaisesRegex(RuntimeError, "filenames differ"):
+                prepared_avatar_digest(avatar)
+
+    def test_rejects_same_count_mismatched_face_and_mask_names(self):
+        with tempfile.TemporaryDirectory() as temp:
+            avatar = Path(temp)
+            prepare(avatar)
+            (avatar / "mask/0001.png").rename(avatar / "mask/0002.png")
+            with self.assertRaisesRegex(RuntimeError, "filenames differ"):
+                prepared_avatar_digest(avatar)
+
+    def test_rejects_empty_face_or_mask_before_hashing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            avatar = Path(temp)
+            prepare(avatar)
+            (avatar / "mask/0001.png").write_bytes(b"")
+            with self.assertRaisesRegex(RuntimeError, "nonempty regular files"):
+                prepared_avatar_digest(avatar)
 
     def test_rejects_symlinked_prepared_files(self):
         with tempfile.TemporaryDirectory() as temp:
