@@ -22,6 +22,28 @@ SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 WHEEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+%-]*\.whl\Z")
 
 
+def _wheel_digest(path: Path) -> tuple[int, str]:
+    """Hash and validate one wheel using a single non-followed descriptor."""
+    if path.is_symlink():
+        raise ValueError("wheelhouse symlink denied")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as error:
+        raise ValueError("wheelhouse file cannot be opened safely") from error
+    with os.fdopen(fd, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size <= 0:
+            raise ValueError("wheelhouse wheel size or file kind mismatch")
+        check = hashlib.sha256()
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            check.update(chunk)
+        handle.seek(0)
+        if not zipfile.is_zipfile(handle):
+            raise ValueError("wheelhouse file is not a ZIP wheel")
+    return info.st_size, check.hexdigest()
+
+
 def verify_wheelhouse(wheelhouse: Path, manifest_path: Path, approved_sha256: str) -> dict:
     """Verify every wheel byte and require an externally approved manifest."""
     if not isinstance(approved_sha256, str) or SHA256.fullmatch(approved_sha256) is None:
@@ -62,28 +84,11 @@ def verify_wheelhouse(wheelhouse: Path, manifest_path: Path, approved_sha256: st
         raise ValueError("wheelhouse contains unexpected or missing files")
 
     for name, (expected_size, expected_digest) in expected.items():
-        path = wheelhouse / name
-        if path.is_symlink():
-            raise ValueError("wheelhouse symlink denied")
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        try:
-            fd = os.open(path, flags)
-        except OSError as error:
-            raise ValueError("wheelhouse file cannot be opened safely") from error
-        with os.fdopen(fd, "rb") as handle:
-            info = os.fstat(handle.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_size != expected_size:
-                raise ValueError("wheelhouse wheel size or file kind mismatch")
-            check = hashlib.sha256()
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                check.update(chunk)
-            if not hmac.compare_digest(check.hexdigest(), expected_digest):
-                raise ValueError("wheelhouse wheel hash mismatch")
-            # Check the *same opened file descriptor*, not a path that could
-            # be swapped after hashing and before ZIP inspection.
-            handle.seek(0)
-            if not zipfile.is_zipfile(handle):
-                raise ValueError("wheelhouse file is not a ZIP wheel")
+        size, actual_digest = _wheel_digest(wheelhouse / name)
+        if size != expected_size:
+            raise ValueError("wheelhouse wheel size or file kind mismatch")
+        if not hmac.compare_digest(actual_digest, expected_digest):
+            raise ValueError("wheelhouse wheel hash mismatch")
     return {
         "schema": "vpr.rt1.gpu-wheelhouse-preflight.v1",
         "python_target": "3.10",
@@ -95,15 +100,55 @@ def verify_wheelhouse(wheelhouse: Path, manifest_path: Path, approved_sha256: st
     }
 
 
+def draft_manifest(wheelhouse: Path, output: Path) -> dict:
+    """Create an unapproved lock candidate; caller must approve independently."""
+    if wheelhouse.is_symlink() or not wheelhouse.is_dir():
+        raise ValueError("wheelhouse must be a real directory")
+    if output.exists() or output.is_symlink():
+        raise ValueError("refusing to overwrite wheelhouse lock candidate")
+    files = sorted(wheelhouse.iterdir(), key=lambda p: p.name)
+    if not 1 <= len(files) <= 1024:
+        raise ValueError("wheelhouse count invalid")
+    wheels = []
+    for path in files:
+        if WHEEL_NAME.fullmatch(path.name) is None:
+            raise ValueError("wheelhouse contains non-wheel or invalid filename")
+        size, digest = _wheel_digest(path)
+        wheels.append({"filename": path.name, "size": size, "sha256": digest})
+    payload = {"schema": SCHEMA, "python": "3.10", "wheels": wheels}
+    raw = (json.dumps(payload, sort_keys=True, indent=2) + "\\n").encode("utf-8")
+    # Exclusive creation preserves earlier reviewed evidence.
+    with output.open("xb") as handle:
+        handle.write(raw)
+        handle.flush()
+        os.fsync(handle.fileno())
+    return {
+        "draft_sha256_for_independent_review": hashlib.sha256(raw).hexdigest(),
+        "wheel_count": len(wheels),
+        "approved": False,
+        "cuda_executed": False,
+        "production_release_approved": False,
+    }
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheelhouse", required=True, type=Path)
-    parser.add_argument("--manifest", required=True, type=Path)
-    parser.add_argument("--approved-manifest-sha256", required=True)
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--approved-manifest-sha256")
+    parser.add_argument("--draft-manifest-output", type=Path)
     args = parser.parse_args(argv)
+    if args.draft_manifest_output:
+        if args.manifest or args.approved_manifest_sha256:
+            parser.error("draft and approved verification are mutually exclusive")
+    elif args.manifest is None or args.approved_manifest_sha256 is None:
+        parser.error("--manifest and --approved-manifest-sha256 are required")
     try:
-        report = verify_wheelhouse(args.wheelhouse, args.manifest,
-                                   args.approved_manifest_sha256)
+        if args.draft_manifest_output:
+            report = draft_manifest(args.wheelhouse, args.draft_manifest_output)
+        else:
+            report = verify_wheelhouse(args.wheelhouse, args.manifest,
+                                       args.approved_manifest_sha256)
     except (OSError, ValueError) as error:
         print(f"RT1 wheelhouse preflight BLOCKED: {error}", file=sys.stderr)
         return 2
