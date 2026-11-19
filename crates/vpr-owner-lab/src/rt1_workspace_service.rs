@@ -24,7 +24,7 @@ pub struct WorkspaceStatus {
 /// sibling-file transaction fence across their complete read-modify-commit.
 /// This serializes canonical file writers without replacing the existing
 /// lifetime owner-lab lease or allowing multiple live media runtimes.
-
+///
 /// Service handle referencing the one in-process canonical workspace lock.
 pub struct Rt1WorkspaceService {
     transaction: &'static Mutex<()>,
