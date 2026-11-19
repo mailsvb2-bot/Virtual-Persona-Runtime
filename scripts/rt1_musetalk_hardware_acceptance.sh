@@ -32,7 +32,8 @@ OUT="$1"
 [[ -d "$(dirname -- "$OUT")" ]] || die "create the evidence directory first; this script will not mutate arbitrary parent paths"
 
 printf 'Checking pinned Python environment (no GPU model execution)\n'
-python "$SCRIPT_DIR/rt1_musetalk_environment.py"
+python "$SCRIPT_DIR/rt1_musetalk_environment.py" \
+  --approved-snapshot-sha256 "$RT1_MUSETALK_ENVIRONMENT_SHA256"
 printf 'Checking approved MuseTalk source, avatar and weights (no CUDA execution)\n'
 python "$SCRIPT_DIR/rt1_musetalk_offline_preflight.py" \
   --root "$RT1_MUSETALK_ROOT" \
