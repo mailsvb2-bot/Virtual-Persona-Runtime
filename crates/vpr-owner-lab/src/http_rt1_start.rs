@@ -124,7 +124,7 @@ pub(super) fn visitor_start(
     // start_with_verified_worker/open() must re-admit after preparation.
     manager
         .preflight_visitor(&body.visitor_token)
-        .map_err(|_| error_response(403, "RT1_VISITOR_ACCESS_DENIED"))?;
+        .map_err(|_| error_response(409, "RT1_VISITOR_ACCESS_DENIED"))?;
     let (session_id, _reservation) = reserve_session_identity(state)?;
     let (providers, worker) = selected_provider_bundle(&session_id)?;
     let mut engine = super::super::engine_bootstrap::assemble(providers, true)
