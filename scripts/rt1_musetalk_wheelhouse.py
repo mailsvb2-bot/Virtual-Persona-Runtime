@@ -18,8 +18,8 @@ import sys
 import zipfile
 
 SCHEMA = "vpr.rt1.gpu-wheelhouse-lock.v1"
-SHA256 = re.compile(r"[0-9a-f]{64}\\Z")
-WHEEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+%-]*\\.whl\\Z")
+SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+WHEEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+%-]*\.whl\Z")
 
 
 def verify_wheelhouse(wheelhouse: Path, manifest_path: Path, approved_sha256: str) -> dict:
