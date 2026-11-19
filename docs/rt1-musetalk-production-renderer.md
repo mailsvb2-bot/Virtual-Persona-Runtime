@@ -41,6 +41,10 @@ export RT1_MUSETALK_MODELS_SHA256='<64-lowercase-hex-approved-weights-digest>'
 # Independently approved hash of *all* installed Python distributions.
 # Do not compute or approve this pin during worker startup.
 export RT1_MUSETALK_ENVIRONMENT_SHA256='<64-lowercase-hex-approved-environment-snapshot>'
+# Offline installation provenance: wheelhouse and independently approved lock.
+export RT1_MUSETALK_WHEELHOUSE_DIR=/srv/vpr-wheelhouse
+export RT1_MUSETALK_WHEELHOUSE_MANIFEST=/srv/approved/vpr-wheelhouse-lock.json
+export RT1_MUSETALK_WHEELHOUSE_MANIFEST_SHA256='<64-lowercase-hex-approved-wheelhouse-lock>'
 # MUST equal the canonical reviewed Persona identity/version in Owner Lab.
 export RT1_MUSETALK_PERSONA_ID=persona-a
 export RT1_MUSETALK_PERSONA_VERSION=3
@@ -123,6 +127,43 @@ renderer needs, including preparation components; run it **only in the
 approved offline preparation environment**. Keep all downloaded weights and
 prepared face images out of Git. Then run the zero-GPU source/assets
 preflight below, followed by actual CUDA and browser evidence.
+
+## Offline wheelhouse integrity and approval (CPU-only)
+
+Before attempting the GPU acceptance script, stage all approved *binary*
+wheel files for the pinned Python 3.10 environment in a dedicated immutable
+directory. No package download, CUDA import or installation occurs in these
+commands. The approval file must live **outside** the wheelhouse; do not
+automatically accept a hash returned by the candidate generator.
+
+```sh
+export RT1_MUSETALK_WHEELHOUSE_DIR=/srv/vpr-wheelhouse
+export RT1_MUSETALK_WHEELHOUSE_MANIFEST=/srv/review/vpr-wheelhouse-lock.json
+
+# On a trusted staging host, produce a candidate manifest without approval.
+python /opt/Virtual-Persona-Runtime/scripts/rt1_musetalk_wheelhouse.py \
+  --wheelhouse "$RT1_MUSETALK_WHEELHOUSE_DIR" \
+  --draft-manifest-output "$RT1_MUSETALK_WHEELHOUSE_MANIFEST"
+
+# Independently review source, licenses, platform tags and every wheel SHA-256.
+# Store the approved manifest digest OUTSIDE the wheelhouse and deployed image.
+export RT1_MUSETALK_WHEELHOUSE_MANIFEST_SHA256='<independently-approved-sha256>'
+python /opt/Virtual-Persona-Runtime/scripts/rt1_musetalk_wheelhouse.py \
+  --wheelhouse "$RT1_MUSETALK_WHEELHOUSE_DIR" \
+  --manifest "$RT1_MUSETALK_WHEELHOUSE_MANIFEST" \
+  --approved-manifest-sha256 "$RT1_MUSETALK_WHEELHOUSE_MANIFEST_SHA256"
+```
+
+The verified manifest records exact wheel filenames, lengths and SHA-256
+digests and rejects unexpected files, symlinks, missing wheels and changed
+bytes. The candidate generator never marks its own output approved. This is
+a **software integrity tool**, not proof that the installed packages came
+from that wheelhouse, that every CUDA ABI is compatible, or that real GPU
+inference works. On the separately approved clean build host, install with
+`--no-index --find-links` against this locked wheelhouse, run `pip check`,
+and independently approve the installed-distribution snapshot above.
+Until that real clean installation is verified, the deployment gate remains
+open and production release remains blocked.
 
 ## Prepared face integrity gate
 
