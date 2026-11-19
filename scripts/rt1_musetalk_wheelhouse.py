@@ -22,6 +22,60 @@ SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 WHEEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+%-]*\.whl\Z")
 
 
+def _validate_wheel_archive(handle) -> None:
+    """Reject unsafe wheel ZIP members without extracting or running code.
+
+    A digest pins bytes, not archive semantics. The independent wheel review
+    must never approve traversal, duplicate ZIP names, symlinks or a ZIP with
+    no Python wheel metadata. Full package installation remains a separate gate.
+    """
+    try:
+        with zipfile.ZipFile(handle) as archive:
+            members = archive.infolist()
+            if not members or len(members) > 50000:
+                raise ValueError("wheelhouse ZIP member count invalid")
+            seen = set()
+            names = set()
+            total_size = 0
+            for member in members:
+                name = member.filename
+                if (not name or "\\" in name or name.startswith("/")
+                        or any(part in ("", ".", "..") for part in
+                               name.rstrip("/").split("/"))
+                        or len(name) > 4096):
+                    raise ValueError("unsafe wheelhouse ZIP member path")
+                if name in seen:
+                    raise ValueError("duplicate wheelhouse ZIP member")
+                seen.add(name)
+                if member.flag_bits & 1:
+                    raise ValueError("encrypted wheelhouse ZIP member")
+                unix_mode = (member.external_attr >> 16) & 0o170000
+                if unix_mode not in (0, 0o100000, 0o040000):
+                    raise ValueError("non-regular wheelhouse ZIP member")
+                total_size += member.file_size
+                if total_size > 32 * 1024**3:
+                    raise ValueError("wheelhouse ZIP expanded size exceeds limit")
+                if not member.is_dir():
+                    names.add(name)
+            wheels = [name for name in names if name.endswith(".dist-info/WHEEL")]
+            if len(wheels) != 1:
+                raise ValueError("wheelhouse Python WHEEL metadata missing or ambiguous")
+            prefix = wheels[0][:-len("WHEEL")]
+            if prefix + "METADATA" not in names or prefix + "RECORD" not in names:
+                raise ValueError("wheelhouse package metadata or RECORD missing")
+            # Metadata is small in a valid wheel. Read it to verify ZIP CRC and
+            # avoid accepting a ZIP whose central directory merely names WHEEL.
+            item = archive.getinfo(wheels[0])
+            if item.file_size > 65536:
+                raise ValueError("wheelhouse WHEEL metadata too large")
+            with archive.open(item) as content:
+                wheel_metadata = content.read(65537)
+            if not any(line.startswith(b"Wheel-Version: ") for line in wheel_metadata.splitlines()):
+                raise ValueError("wheelhouse WHEEL metadata invalid")
+    except (zipfile.BadZipFile, RuntimeError, EOFError) as error:
+        raise ValueError("wheelhouse ZIP archive invalid") from error
+
+
 def _wheel_digest(path: Path) -> tuple[int, str]:
     """Hash and validate one wheel using a single non-followed descriptor."""
     if path.is_symlink():
@@ -41,6 +95,8 @@ def _wheel_digest(path: Path) -> tuple[int, str]:
         handle.seek(0)
         if not zipfile.is_zipfile(handle):
             raise ValueError("wheelhouse file is not a ZIP wheel")
+        handle.seek(0)
+        _validate_wheel_archive(handle)
     return info.st_size, check.hexdigest()
 
 
