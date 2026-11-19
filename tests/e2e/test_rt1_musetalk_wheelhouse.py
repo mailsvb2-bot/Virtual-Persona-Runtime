@@ -19,6 +19,8 @@ class WheelhouseContract(unittest.TestCase):
         wheel = root / name
         with zipfile.ZipFile(wheel, "w") as handle:
             handle.writestr("torch-2.0.1.dist-info/WHEEL", "Wheel-Version: 1.0\\n")
+            handle.writestr("torch-2.0.1.dist-info/METADATA", "Name: torch\\nVersion: 2.0.1\\n")
+            handle.writestr("torch-2.0.1.dist-info/RECORD", "")
         data = wheel.read_bytes()
         manifest = Path(base) / "wheel-lock.json"
         manifest.write_text(json.dumps({
@@ -79,6 +81,47 @@ class WheelhouseContract(unittest.TestCase):
             new_approval = hashlib.sha256(manifest.read_bytes()).hexdigest()
             with self.assertRaisesRegex(ValueError, "ambiguous or malformed"):
                 verify_wheelhouse(root, manifest, new_approval)
+
+    def test_unsafe_zip_member_paths_are_denied_even_with_approved_hash(self):
+        for bad_name in ("../escape.py", "/absolute.py", "pkg/../../escape.py", "pkg\\\\evil.py"):
+            with self.subTest(name=bad_name), tempfile.TemporaryDirectory() as base:
+                root, manifest, approved, wheel = self.fixture(base)
+                with zipfile.ZipFile(wheel, "a") as archive:
+                    archive.writestr(bad_name, "bad")
+                data = json.loads(manifest.read_text())
+                data["wheels"][0]["sha256"] = hashlib.sha256(wheel.read_bytes()).hexdigest()
+                data["wheels"][0]["size"] = wheel.stat().st_size
+                manifest.write_text(json.dumps(data))
+                digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+                with self.assertRaisesRegex(ValueError, "unsafe wheelhouse ZIP member path"):
+                    verify_wheelhouse(root, manifest, digest)
+
+    def test_duplicate_or_missing_wheel_metadata_is_denied(self):
+        import warnings
+        with tempfile.TemporaryDirectory() as base:
+            root, manifest, approved, wheel = self.fixture(base)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                with zipfile.ZipFile(wheel, "a") as archive:
+                    archive.writestr("torch-2.0.1.dist-info/WHEEL", "Wheel-Version: 1.0\\n")
+            data = json.loads(manifest.read_text())
+            data["wheels"][0]["sha256"] = hashlib.sha256(wheel.read_bytes()).hexdigest()
+            data["wheels"][0]["size"] = wheel.stat().st_size
+            manifest.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, "duplicate wheelhouse ZIP member"):
+                verify_wheelhouse(root, manifest,
+                                  hashlib.sha256(manifest.read_bytes()).hexdigest())
+        with tempfile.TemporaryDirectory() as base:
+            root, manifest, approved, wheel = self.fixture(base)
+            with zipfile.ZipFile(wheel, "w") as archive:
+                archive.writestr("pkg/module.py", "pass")
+            data = json.loads(manifest.read_text())
+            data["wheels"][0]["sha256"] = hashlib.sha256(wheel.read_bytes()).hexdigest()
+            data["wheels"][0]["size"] = wheel.stat().st_size
+            manifest.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, "WHEEL metadata missing"):
+                verify_wheelhouse(root, manifest,
+                                  hashlib.sha256(manifest.read_bytes()).hexdigest())
 
     def test_non_wheel_zip_bytes_are_denied(self):
         with tempfile.TemporaryDirectory() as base:
