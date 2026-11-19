@@ -2,7 +2,7 @@
 //! Never lock the atomically replaced data inode: use a stable sibling lock.
 //! The process-local mutex and the OS file lock share the same lock order.
 use std::fs::{self, File, OpenOptions};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use parking_lot::{Mutex, MutexGuard};
@@ -19,17 +19,13 @@ pub(crate) struct PersonaTransaction {
 /// The caller must NOT perform network/provider I/O while holding this guard.
 #[cfg(windows)]
 pub(crate) fn begin() -> Result<PersonaTransaction, String> {
-    let path = std::env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from);
+    let path = crate::persona_store_lease::lock_target()?;
     begin_optional(path.as_deref())
 }
 
 /// Use the exact static lock already owned by the workspace service.
 pub(crate) fn begin_workspace(mutex: &'static Mutex<()>) -> Result<PersonaTransaction, String> {
-    let path = std::env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from);
+    let path = crate::persona_store_lease::lock_target()?;
     begin_with_mutex(mutex, path.as_deref())
 }
 
@@ -50,7 +46,7 @@ fn begin_with_mutex(
     let local = mutex.lock();
     let file = match path {
         Some(path) => Some(acquire_sibling_lock(path)?),
-        None => None, // Existing Windows Credential Manager is single-process only.
+        None => None, // Only unconfigured non-Windows labs are ephemeral.
     };
     Ok(PersonaTransaction {
         _local: local,
@@ -118,6 +114,7 @@ fn acquire_sibling_lock(path: &Path) -> Result<File, String> {
 mod tests {
     use super::*;
     use std::process::Command;
+    use std::path::PathBuf;
 
     #[test]
     fn child_transaction_lock_probe() {
