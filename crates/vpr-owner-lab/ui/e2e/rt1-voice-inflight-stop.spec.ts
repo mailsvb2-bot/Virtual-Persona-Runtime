@@ -479,3 +479,74 @@ test("RT1 text failures display only reviewed actionable reason codes", async ({
   await expect(page.locator("#status")).toContainText("RT1_VISITOR_TEXT_DENIED");
   await expect(page.locator("#status")).not.toContainText("лимит запросов");
 });
+
+for (const [actionId, privacyRoute] of [
+  ["memory-disable", "consent"],
+  ["memory-erase", "erase"],
+  ["memory-revoke", "revoke"],
+  ["memory-rotate", "rotate"],
+] as const) {
+  test(`RT1 ${actionId} preserves STOP retry when privacy endpoint cannot confirm media stop`, async ({ page }) => {
+    await page.addInitScript(() => {
+      const win = window as typeof window & { LivekitClient?: unknown };
+      class FakeRoom {
+        on(): FakeRoom { return this; }
+        async connect(): Promise<void> {}
+        async disconnect(): Promise<void> {}
+      }
+      win.LivekitClient = { Room: FakeRoom, RoomEvent: {} };
+      window.confirm = () => true;
+    });
+    await page.route("**/api/bootstrap", route => route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ csrf_token: "test", rt1_memory_configured: true }),
+    }));
+    await page.route("**/api/rt1/visitor/start", route => route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({
+        session_id: "privacy-stop-session", voice_enabled: true,
+        signal: { transport: { kind: "live_kit", server_url: "wss://example.test", token: "scoped" } },
+      }),
+    }));
+    await page.route("**/api/rt1/visitor/status", route => route.fulfill({
+      status: 200, contentType: "application/json", body: JSON.stringify({ active: true }),
+    }));
+    let privacyCalls = 0;
+    await page.route(`**/api/rt1/visitor/memory/${privacyRoute}`, route => {
+      privacyCalls += 1;
+      return route.fulfill({
+        status: 502, contentType: "application/json",
+        body: JSON.stringify({ code: "RT1_MEMORY_REMOTE_STOP_UNCONFIRMED" }),
+      });
+    });
+    let closeCalls = 0;
+    await page.route("**/api/rt1/visitor/close", route => {
+      closeCalls += 1;
+      expect(route.request().postDataJSON()).toEqual({
+        session_id: "privacy-stop-session",
+      });
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ ok: true, remote_stop_confirmed: true }),
+      });
+    });
+    await page.goto("/rt1");
+    await page.locator("#visitor-token").fill("invite");
+    await page.locator("#consent").check();
+    await page.locator("#join").click();
+    await expect(page.locator("#leave")).toBeEnabled();
+    await expect(page.locator("#memory-panel")).toBeVisible();
+    await page.locator("#memory-token").fill("a".repeat(64));
+    await page.locator("#" + actionId).click();
+    await expect.poll(() => privacyCalls).toBe(1);
+    await expect(page.locator("#status")).toContainText("RT1_MEMORY_REMOTE_STOP_UNCONFIRMED");
+    await expect(page.locator("#leave")).toBeEnabled();
+    await expect(page.locator("#join")).toBeDisabled();
+    await expect(page.locator("#speak")).toBeDisabled();
+    await expect(page.locator("#send-text")).toBeDisabled();
+    await page.locator("#leave").click();
+    await expect.poll(() => closeCalls).toBe(1);
+    await expect(page.locator("#leave")).toBeDisabled();
+    await expect(page.locator("#join")).toBeEnabled();
+  });
+}
