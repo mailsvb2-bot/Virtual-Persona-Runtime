@@ -24,6 +24,14 @@ pub(crate) fn begin() -> Result<PersonaTransaction, String> {
     begin_optional(path.as_deref())
 }
 
+/// Use the exact static lock already owned by the workspace service.
+pub(crate) fn begin_workspace(mutex: &'static Mutex<()>) -> Result<PersonaTransaction, String> {
+    let path = std::env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    begin_with_mutex(mutex, path.as_deref())
+}
+
 /// Used by explicit-path persistence tests and RT0 reviewed-capture writes;
 /// the lock follows the destination, not process-global test environment.
 pub(crate) fn begin_for_path(path: &Path) -> Result<PersonaTransaction, String> {
@@ -31,7 +39,14 @@ pub(crate) fn begin_for_path(path: &Path) -> Result<PersonaTransaction, String> 
 }
 
 fn begin_optional(path: Option<&Path>) -> Result<PersonaTransaction, String> {
-    let local = CANONICAL_TRANSACTION.lock();
+    begin_with_mutex(&CANONICAL_TRANSACTION, path)
+}
+
+fn begin_with_mutex(
+    mutex: &'static Mutex<()>,
+    path: Option<&Path>,
+) -> Result<PersonaTransaction, String> {
+    let local = mutex.lock();
     let file = match path {
         Some(path) => Some(acquire_sibling_lock(path)?),
         None => None, // Existing Windows Credential Manager is single-process only.
