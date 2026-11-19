@@ -27,11 +27,11 @@ pub(crate) fn lock_target() -> Result<Option<PathBuf>, String> {
         let root = env::var_os("LOCALAPPDATA")
             .or_else(|| env::var_os("APPDATA"))
             .ok_or_else(|| "Windows Persona lock directory unavailable".to_owned())?;
-        return Ok(Some(
+        Ok(Some(
             PathBuf::from(root)
                 .join("Virtual-Persona-Runtime")
                 .join("owner-lab-credential-manager-v2"),
-        ));
+        ))
     }
     #[cfg(not(windows))]
     {
