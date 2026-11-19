@@ -206,7 +206,11 @@ class MuseTalkRenderer:
         verify_upstream_source(
             root_path, os.environ.get("RT1_MUSETALK_SOURCE_REVISION", "")
         )
-        # Load only after local path, weights and CUDA checks. No implicit downloads.
+        # An independently approved full installed-distribution fingerprint is
+        # required before any GPU imports or deserialization of avatar assets.
+        from rt1_musetalk_environment import verify_approved_environment
+        verify_approved_environment(os.environ.get("RT1_MUSETALK_ENVIRONMENT_SHA256"))
+        # Load only after local path, weights and dependency approval checks.
         import torch
         if not torch.cuda.is_available() or gpu_id >= torch.cuda.device_count() or gpu_id < 0:
             raise RuntimeError("CUDA GPU unavailable")
