@@ -1,6 +1,7 @@
 """CPU-only offline installer tests: all subprocess effects are intercepted."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -11,7 +12,8 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from rt1_musetalk_clean_install import (
-    check_python310, install_approved, locked_requirements, main,
+    check_python310, install_approved, isolated_install_environment,
+    locked_requirements, main,
 )
 from rt1_musetalk_wheelhouse import SCHEMA
 
@@ -93,10 +95,12 @@ class OfflineInstallContract(unittest.TestCase):
             wheels, lock, approved, digest = self.fixture(root)
             destination = root / "new-private-venv"
             commands = []
+            environments = []
             requirements_seen = []
 
             def capture(command, **kwargs):
                 commands.append(command)
+                environments.append(kwargs.get("env"))
                 if "--require-hashes" in command:
                     requirements_seen.append(
                         Path(command[command.index("-r") + 1]).read_text()
@@ -108,7 +112,13 @@ class OfflineInstallContract(unittest.TestCase):
                     }))
                 return SimpleNamespace(stdout="")
 
-            with patch("rt1_musetalk_clean_install.check_python310"), patch(
+            with patch.dict(os.environ, {
+                "PIP_TARGET": str(root / "forbidden-external-destination"),
+                "PIP_PREFIX": str(root / "wrong-prefix"),
+                "PIP_USER": "true",
+                "PYTHONPATH": str(root / "untrusted-pythonpath"),
+                "VIRTUAL_ENV": str(root / "other-venv"),
+            }), patch("rt1_musetalk_clean_install.check_python310"), patch(
                 "rt1_musetalk_clean_install.subprocess.run", side_effect=capture
             ):
                 result = install_approved(wheels, lock, approved,
@@ -126,6 +136,15 @@ class OfflineInstallContract(unittest.TestCase):
             self.assertIn("--require-hashes", pip)
             self.assertIn("--no-cache-dir", pip)
             self.assertTrue(any(c[-2:] == ["pip", "check"] for c in commands))
+            for env in environments:
+                self.assertEqual(env["PIP_CONFIG_FILE"], os.devnull)
+                self.assertEqual(env["PYTHONNOUSERSITE"], "1")
+                self.assertNotIn("PIP_TARGET", env)
+                self.assertNotIn("PIP_PREFIX", env)
+                self.assertNotIn("PIP_USER", env)
+                self.assertNotIn("PYTHONPATH", env)
+                self.assertNotIn("VIRTUAL_ENV", env)
+            self.assertFalse((root / "forbidden-external-destination").exists())
 
 
 if __name__ == "__main__":
