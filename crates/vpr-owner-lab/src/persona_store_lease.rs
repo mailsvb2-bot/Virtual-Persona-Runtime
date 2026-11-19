@@ -47,6 +47,7 @@ pub(crate) fn lock_target() -> Result<Option<PathBuf>, String> {
 struct HeldLease {
     _file: fs::File,
     path: PathBuf,
+    pid: u32,
 }
 type ActiveLease = Mutex<Option<Weak<HeldLease>>>;
 static ACTIVE_LEASE: OnceLock<ActiveLease> = OnceLock::new();
@@ -67,8 +68,8 @@ pub(crate) fn require_live_runtime_owner() -> Result<(), String> {
     let guard = ACTIVE_LEASE.get().ok_or("RT1 owner lease required")?.lock();
     let owner = guard.as_ref().and_then(Weak::upgrade)
         .ok_or("RT1 owner lease required")?;
-    if owner.path != path {
-        return Err("RT1 owner lease does not match canonical Persona".into());
+    if owner.path != path || owner.pid != std::process::id() {
+        return Err("RT1 owner lease does not match this process and Persona".into());
     }
     Ok(())
 }
@@ -117,7 +118,11 @@ pub fn acquire_persona_store_lease() -> Result<PersonaStoreLease, String> {
         .map_err(|_| "reviewed Persona lease file cannot be opened")?;
     fs2::FileExt::try_lock_exclusive(&file)
         .map_err(|_| "reviewed Persona store is already in use by another process")?;
-    let owner = Arc::new(HeldLease { _file: file, path: lock_path });
+    let owner = Arc::new(HeldLease {
+        _file: file,
+        path: lock_path,
+        pid: std::process::id(),
+    });
     *ACTIVE_LEASE.get_or_init(|| Mutex::new(None)).lock() = Some(Arc::downgrade(&owner));
     Ok(PersonaStoreLease { _owner: Some(owner) })
 }
