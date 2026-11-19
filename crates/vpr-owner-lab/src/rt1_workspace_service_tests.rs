@@ -254,3 +254,49 @@ fn service_signature_does_not_accept_client_claimed_readiness() {
     let _ = Rt1WorkspaceService::new();
     assert!(required_persona().is_err());
 }
+
+#[test]
+fn buffered_output_rechecks_revocation_even_when_compute_fails() {
+    use std::cell::Cell;
+
+    let revoked = Cell::new(false);
+    let checks = Cell::new(0_u32);
+    let result: Result<(), String> = guard_buffered_output(
+        |_| {
+            checks.set(checks.get() + 1);
+            if revoked.get() {
+                Err("visitor authorization revoked".to_owned())
+            } else {
+                Ok(())
+            }
+        },
+        || Ok(10),
+        || {
+            revoked.set(true);
+            Err("provider computation failed".to_owned())
+        },
+    );
+    assert_eq!(
+        checks.get(),
+        2,
+        "failed computations must recheck authority"
+    );
+    assert_eq!(result.unwrap_err(), "visitor authorization revoked");
+}
+
+#[test]
+fn buffered_output_preserves_provider_error_when_authority_remains_valid() {
+    use std::cell::Cell;
+
+    let checks = Cell::new(0_u32);
+    let result: Result<(), String> = guard_buffered_output(
+        |_| {
+            checks.set(checks.get() + 1);
+            Ok(())
+        },
+        || Ok(10),
+        || Err("provider computation failed".to_owned()),
+    );
+    assert_eq!(checks.get(), 2);
+    assert_eq!(result.unwrap_err(), "provider computation failed");
+}

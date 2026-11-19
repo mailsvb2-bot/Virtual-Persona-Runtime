@@ -390,9 +390,12 @@ fn guard_buffered_output<T>(
 ) -> Result<T, String> {
     let started_at = clock()?;
     authorize(started_at)?;
-    let result = compute()?;
+    // Revalidate even when the computation fails: a concurrent owner pause,
+    // correction or unpublish must not be hidden by a provider error.
+    // Canonical revocation takes precedence over that computation error.
+    let result = compute();
     authorize(clock()?.max(started_at))?;
-    Ok(result)
+    result
 }
 
 fn required_persona() -> Result<PersistedPersonaV2, String> {
