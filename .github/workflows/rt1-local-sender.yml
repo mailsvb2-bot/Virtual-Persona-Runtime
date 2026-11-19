@@ -7,6 +7,7 @@ on:
       - 'scripts/rt1_musetalk_renderer.py'
       - 'scripts/rt1_musetalk_offline_preflight.py'
       - 'scripts/rt1_musetalk_environment.py'
+      - 'scripts/rt1_musetalk_gpu_acceptance.py'
       - 'scripts/rt1_musetalk_hardware_acceptance.sh'
       - 'scripts/rt1_media_worker_*.py'
       - 'tests/e2e/test_rt1_*.py'
