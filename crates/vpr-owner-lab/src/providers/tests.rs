@@ -271,29 +271,45 @@ fn explicit_owner_bundle_uses_separate_provider_instances_and_owner_avatar_ident
 
     let owner_a = "a".repeat(32);
     let owner_b = "b".repeat(32);
-    let a_bundle = super::ProviderBundle::from_explicit_owner_profile_with_avatar(
-        &owner_a, &a, pcm_avatar(),
-    )
-    .unwrap();
-    let b_bundle = super::ProviderBundle::from_explicit_owner_profile_with_avatar(
-        &owner_b, &b, pcm_avatar(),
-    )
-    .unwrap();
+    let a_bundle =
+        super::ProviderBundle::from_explicit_owner_profile_with_avatar(&owner_a, &a, pcm_avatar())
+            .unwrap();
+    let b_bundle =
+        super::ProviderBundle::from_explicit_owner_profile_with_avatar(&owner_b, &b, pcm_avatar())
+            .unwrap();
     assert_ne!(
         a_bundle.avatar_descriptor.configuration_fingerprint_sha256,
         b_bundle.avatar_descriptor.configuration_fingerprint_sha256
     );
     assert_ne!(
-        a_bundle.stt_descriptor.unwrap().configuration_fingerprint_sha256,
-        b_bundle.stt_descriptor.unwrap().configuration_fingerprint_sha256
+        a_bundle
+            .stt_descriptor
+            .unwrap()
+            .configuration_fingerprint_sha256,
+        b_bundle
+            .stt_descriptor
+            .unwrap()
+            .configuration_fingerprint_sha256
     );
     assert_ne!(
-        a_bundle.llm_descriptor.unwrap().configuration_fingerprint_sha256,
-        b_bundle.llm_descriptor.unwrap().configuration_fingerprint_sha256
+        a_bundle
+            .llm_descriptor
+            .unwrap()
+            .configuration_fingerprint_sha256,
+        b_bundle
+            .llm_descriptor
+            .unwrap()
+            .configuration_fingerprint_sha256
     );
     assert_ne!(
-        a_bundle.tts_descriptor.unwrap().configuration_fingerprint_sha256,
-        b_bundle.tts_descriptor.unwrap().configuration_fingerprint_sha256
+        a_bundle
+            .tts_descriptor
+            .unwrap()
+            .configuration_fingerprint_sha256,
+        b_bundle
+            .tts_descriptor
+            .unwrap()
+            .configuration_fingerprint_sha256
     );
     assert!(
         super::ProviderBundle::from_explicit_owner_profile_with_avatar(
