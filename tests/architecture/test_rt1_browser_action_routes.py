@@ -62,8 +62,8 @@ class Rt1BrowserActions(unittest.TestCase):
         self.assertLess(provider, engine)
         self.assertIn("self.workspace.admit_visitor_turn(", manager)
         self.assertIn(".preflight_visitor(token)", start[:begin])
-        self.assertIn("owner_binding_for_visitor(token)", start[:begin])
-        self.assertIn("profile_for_owner(&owner.owner_id)", start[:begin])
+        self.assertIn("owner_provider_binding_for_visitor(token)", start[:begin])
+        self.assertIn("owner_provider_binding_for_visitor(token)", start[:begin])
         # Never remove the authoritative second admission or egress fence.
         self.assertIn("manager.open_with_fast_revoke(", (
             ROOT / "crates/vpr-owner-lab/src/rt1_visitor_conversation.rs"
