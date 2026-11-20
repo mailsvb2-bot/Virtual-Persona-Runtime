@@ -31,9 +31,14 @@ impl Rt1VisitorSession {
     /// store and must never be used as a real visitor admission.
     #[cfg(all(test, not(windows)))]
     pub(crate) fn inert_for_revocation_test() -> Self {
+        Self::inert_for_revocation_test_for_owner("owner")
+    }
+
+    #[cfg(all(test, not(windows)))]
+    pub(crate) fn inert_for_revocation_test_for_owner(owner_id: &str) -> Self {
         use vpr_policy::publication_lifecycle::CanonicalPublication;
         let mut publication =
-            CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
+            CanonicalPublication::new(owner_id, "persona", "publication", 1).unwrap();
         publication.publish("owner", 1, true).unwrap();
         Self {
             workspace: Arc::new(Rt1WorkspaceService::new()),
