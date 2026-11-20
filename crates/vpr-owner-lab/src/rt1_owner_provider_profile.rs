@@ -43,7 +43,7 @@ impl OwnerProviderProfile {
 /// # Errors
 /// Denies invalid owner IDs, insecure/missing credentials and unsupported
 /// operating systems. Does not return secret values in error strings.
-pub fn profile_for_owner(owner_id: &str) -> Result<Option<OwnerProviderProfile>, String> {
+pub(crate) fn profile_for_owner(owner_id: &str) -> Result<Option<OwnerProviderProfile>, String> {
     if owner_id.len() != 32 || !owner_id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("RT1_OWNER_PROVIDER_ID_INVALID".into());
     }
