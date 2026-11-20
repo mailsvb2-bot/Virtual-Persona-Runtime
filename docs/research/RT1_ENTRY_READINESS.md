@@ -5,6 +5,8 @@ owner account, publish a public URL, or turn the RT1 capability on.
 
 ## Current evidence boundary
 
+**The R0 functional milestone is CLOSED; RT1 is the current development workstream.** The stable handoff is recorded in [the R0 functional milestone release](../releases/R0_FUNCTIONAL_MILESTONE_RELEASE.md). Do not repeat the already accepted R0 demonstration as a development prerequisite. Formal exit evidence and production publication remain separate gates.
+
 The owner has accepted the **RT0 functional demonstration** (Russian speech,
 manual STOP, continuation, owner/visitor sessions) on candidate
 `c393bae4cb369c82ef3f9160b9ba5fc6dc2d5774`.
