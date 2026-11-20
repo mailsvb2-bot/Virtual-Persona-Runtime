@@ -41,7 +41,7 @@ struct PersistedPersonaV1 {
 
 /// An additional owner has its own reviewed Persona and publication state,
 /// retained in the SAME atomic canonical envelope as the legacy owner.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AdditionalOwnerPersona {
     pub(crate) snapshot: DurableReviewedOwnerContextSnapshot,
