@@ -69,7 +69,7 @@ impl PersistedPersonaV2 {
         }
     }
 
-    fn reconciled(
+    pub(crate) fn reconciled(
         snapshot: DurableReviewedOwnerContextSnapshot,
         previous: Option<&str>,
     ) -> Result<Self, String> {
