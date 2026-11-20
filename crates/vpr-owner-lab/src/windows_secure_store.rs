@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,7 +29,7 @@ struct SlotManifest {
 
 pub(crate) struct ChunkedCredentialStore {
     service: &'static str,
-    prefix: &'static str,
+    prefix: Cow<'static, str>,
     legacy_account: Option<&'static str>,
 }
 
@@ -39,8 +41,18 @@ impl ChunkedCredentialStore {
     ) -> Self {
         Self {
             service,
-            prefix,
+            prefix: Cow::Borrowed(prefix),
             legacy_account,
+        }
+    }
+
+    /// Select an owner-specific credential namespace without leaking strings
+    /// or introducing a second secure-store implementation.
+    pub(crate) fn for_owner(service: &'static str, prefix: String) -> Self {
+        Self {
+            service,
+            prefix: Cow::Owned(prefix),
+            legacy_account: None,
         }
     }
 
