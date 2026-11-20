@@ -118,6 +118,32 @@ fn correction_in_record(
 }
 
 impl Rt1WorkspaceService {
+    /// Bind the exact visitor bearer to its owner and reviewed Persona before
+    /// choosing a credential profile or allocating a provider/worker session.
+    ///
+    /// # Errors
+    /// Rejects invalid or revoked visitor credentials and invalid canonical state.
+    pub fn owner_binding_for_visitor(
+        &self,
+        bearer_token: &str,
+    ) -> Result<super::VisitorOwnerBinding, String> {
+        crate::persona_store_lease::require_live_runtime_owner()?;
+        let _tx = persona_transaction::begin_workspace(self.transaction)?;
+        let record = super::required_persona()?;
+        let permit = super::admit_visitor_in_record(&record, bearer_token, super::server_now_millis()?)?;
+        let (_, persona_id, persona_version) = super::published_visitor_workspace(&record, &permit)?;
+        Ok(super::VisitorOwnerBinding {
+            owner_id: permit.owner_id().to_owned(),
+            persona_id: persona_id.to_owned(),
+            persona_version,
+            is_primary: record
+                .workspace
+                .as_ref()
+                .is_some_and(|primary| primary.owner_id == permit.owner_id()),
+        })
+    }
+
+
     /// Existing single-owner route now understands exactly authenticated
     /// additional owners, without treating browser identity as authority.
     pub(super) fn status_for_authenticated_owner(
