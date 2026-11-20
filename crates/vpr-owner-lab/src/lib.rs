@@ -38,7 +38,9 @@ pub use owner_capture::{
 
 pub use owner_context::{ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot};
 
-pub use persona_persistence::{persist_reviewed_capture, restore_reviewed_persona};
+pub use persona_persistence::{
+    persist_reviewed_capture, restore_reviewed_persona, restore_reviewed_persona_for_visitor,
+};
 pub use persona_store_lease::acquire_persona_store_lease;
 pub use rt1_owner_controller::Rt1OwnerController;
 pub use rt1_remote_media_revocation::Rt1RemoteMediaRevocation;
