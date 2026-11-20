@@ -12,6 +12,25 @@ pub(super) fn configured() -> Result<Option<String>, ()> {
     }
 }
 
+/// Production publication is forbidden while rights and cost control remain
+/// contract-only spikes. This check uses existing canonical contract maturity,
+/// not a browser claim or a new policy authority. Contract promotion alone is
+/// NOT sufficient to enable publication: a reviewed runtime gate must replace
+/// this deny before production. Local RT1 test publication remains unaffected.
+pub(super) fn publication_qualification() -> Result<(), &'static str> {
+    let origin = configured().map_err(|()| "RT1_PUBLIC_ORIGIN_INVALID")?;
+    publication_qualification_for(origin.as_deref())
+}
+
+fn publication_qualification_for(origin: Option<&str>) -> Result<(), &'static str> {
+    if origin.is_none() {
+        return Ok(());
+    }
+    // No rights/consent revision and budget reservation are currently bound
+    // to public session admission. Deny before a shareable token is minted.
+    Err("RT1_PUBLIC_RELEASE_QUALIFICATION_REQUIRED")
+}
+
 /// Only an explicit HTTPS DNS origin is eligible for cross-device invites.
 /// No URL path, credentials, query, fragment, port, private IP or hostname
 /// tricks may redirect visitor bearer credentials off the approved origin.
@@ -46,6 +65,16 @@ pub(super) fn verified(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod rt1_public_visitor_origin_tests {
     use super::verified;
+
+    #[test]
+    fn local_test_publication_remains_allowed_but_real_https_fails_closed() {
+        use super::publication_qualification_for;
+        assert_eq!(publication_qualification_for(None), Ok(()));
+        assert_eq!(
+            publication_qualification_for(Some("https://persona.example.org")),
+            Err("RT1_PUBLIC_RELEASE_QUALIFICATION_REQUIRED"),
+        );
+    }
 
     #[test]
     fn only_exact_public_https_dns_origin_is_admitted() {

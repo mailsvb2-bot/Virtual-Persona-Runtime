@@ -50,6 +50,15 @@ jobs:
         run: python3 tests/architecture/check_boundaries.py
       - name: Release contracts
         run: python3 tests/architecture/check_release_contracts.py
+      - name: Exact candidate RT1 P0/P1 evidence inventory (non-promoting)
+        run: python3 scripts/rt1_release_candidate_inventory.py --output "${{ runner.temp }}/rt1-candidate-inventory.json"
+      - name: Preserve exact candidate RT1 evidence inventory
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rt1-candidate-inventory-${{ github.sha }}
+          path: ${{ runner.temp }}/rt1-candidate-inventory.json
+          if-no-files-found: error
+          retention-days: 14
       - name: CI reproducibility guard
         run: python3 tests/architecture/check_ci_reproducibility.py
       - name: Provider HTTP policy

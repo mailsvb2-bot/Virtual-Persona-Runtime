@@ -24,6 +24,10 @@ pub(super) fn startup_error_response(reason: &str) -> HttpResponse {
 /// credentials, owner identity or other private publication failures.
 pub(super) fn publication_error_response(reason: &str) -> HttpResponse {
     match reason {
+        "RT1_PUBLIC_RELEASE_QUALIFICATION_REQUIRED" => {
+            error_response(503, "RT1_PUBLIC_RELEASE_QUALIFICATION_REQUIRED")
+        }
+        "RT1_PUBLIC_ORIGIN_INVALID" => error_response(503, "RT1_PUBLIC_ORIGIN_INVALID"),
         "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED" => {
             error_response(503, "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED")
         }
