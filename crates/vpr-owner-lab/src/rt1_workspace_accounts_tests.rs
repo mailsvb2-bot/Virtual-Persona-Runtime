@@ -2,7 +2,6 @@
 //! All writes target the SAME Persona envelope and same sibling transaction.
 use super::*;
 use crate::owner_context::{DurableOwnerClaimRevisionSnapshot, DurableReviewedOwnerClaimSnapshot};
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn reviewed(persona_id: &str, version: u64) -> DurableReviewedOwnerContextSnapshot {
