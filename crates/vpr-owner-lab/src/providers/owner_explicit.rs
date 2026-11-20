@@ -1,20 +1,17 @@
 //! Explicit-owner provider composition. This is the same canonical bundle
 //! and adapter factory as legacy Owner Lab, but without global credentials.
 use super::{
-    ProviderBundle, ProviderCredentialProfile, ProviderDescriptor, RealtimeAvatarPort,
+    ProviderBundle, ProviderCredentialProfile, RealtimeAvatarPort,
     build_llm, build_selected_avatar, build_stt, ensure_avatar_pcm_compatible,
     required_value,
 };
 use super::tts_factory::build_tts_explicit;
-use vpr_integration::{LlmPort, SttPort, TtsPort};
 
 #[derive(Clone, Copy)]
 pub(super) enum ProviderSource {
     EnvironmentFirst,
     ExplicitOnly,
 }
-
-
 
 impl ProviderBundle {
     /// Build the existing canonical adapters using only one explicitly selected
@@ -63,7 +60,7 @@ impl ProviderBundle {
     }
 
 }
-fn provider_value(
+pub(super) fn provider_value(
     name: &'static str,
     stored: Option<&str>,
     source: ProviderSource,
