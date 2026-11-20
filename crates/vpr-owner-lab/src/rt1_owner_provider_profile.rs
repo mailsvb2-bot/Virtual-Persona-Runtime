@@ -278,3 +278,64 @@ mod tests {
         fs::remove_dir(dir).unwrap();
     }
 }
+
+#[cfg(all(test, windows))]
+mod windows_owner_tests {
+    use super::*;
+
+    #[test]
+    fn windows_owner_profiles_are_independent_and_legacy_store_is_unchanged() {
+        let mut random = [0_u8; 32];
+        getrandom::fill(&mut random).unwrap();
+        let a = random[..16].iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let b = random[16..].iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let make_profile = |owner_id: &str, key: &str| {
+            let mut voice = ProviderCredentialProfile::local_rt0(
+                "https://avatar.example.test",
+                key,
+                format!("stt-{key}"),
+                format!("llm-{key}"),
+            );
+            voice
+                .set_tts(crate::StoredTtsCredential {
+                    provider: "openai-speech".into(),
+                    endpoint: "https://api.openai.com/v1/audio/speech".into(),
+                    api_key: format!("tts-{key}"),
+                    model: "tts-1".into(),
+                    voice: "alloy".into(),
+                })
+                .unwrap();
+            OwnerProviderProfile::new(
+                owner_id,
+                voice,
+                "https://worker.example.test".into(),
+                format!("worker-{key}"),
+            )
+            .unwrap()
+        };
+        let first = make_profile(&a, "owner-a");
+        let second = make_profile(&b, "owner-b");
+        let _ = delete_owner_provider_profile(&a);
+        let _ = delete_owner_provider_profile(&b);
+        save_owner_provider_profile(&a, &first).unwrap();
+        save_owner_provider_profile(&b, &second).unwrap();
+
+        assert_eq!(
+            load_windows_owner_profile(&a).unwrap().unwrap().worker_token,
+            "worker-owner-a"
+        );
+        assert_eq!(
+            load_windows_owner_profile(&b).unwrap().unwrap().worker_token,
+            "worker-owner-b"
+        );
+        assert!(save_owner_provider_profile(&a, &second).is_err());
+        delete_owner_provider_profile(&a).unwrap();
+        assert!(load_windows_owner_profile(&a).unwrap().is_none());
+        assert_eq!(
+            load_windows_owner_profile(&b).unwrap().unwrap().worker_token,
+            "worker-owner-b"
+        );
+        delete_owner_provider_profile(&b).unwrap();
+        assert!(load_windows_owner_profile(&b).unwrap().is_none());
+    }
+}
