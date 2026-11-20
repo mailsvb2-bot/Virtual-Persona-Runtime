@@ -105,7 +105,14 @@ class Rt1BrowserActions(unittest.TestCase):
         router = ROUTER.read_text(encoding="utf-8")
         called = set(re.findall(r'["\'](/api/rt1/(?:owner|visitor)/[a-z-]+)["\']', js))
         self.assertGreaterEqual(len(called), 11)
-        for path in called:
+        visitor_bootstrap = "/api/rt1/visitor/bootstrap"
+        self.assertIn(visitor_bootstrap, called)
+        main = (ROOT / "crates/vpr-owner-lab/src/main.rs").read_text(encoding="utf-8")
+        # This is the only GET route in RT1; the existing POST router still
+        # owns every visitor and owner action.
+        self.assertIn('"' + visitor_bootstrap + '"', main)
+        self.assertIn('if http_rt1::enabled()', main)
+        for path in called - {visitor_bootstrap}:
             with self.subTest(path=path):
                 self.assertIn('"' + path + '"', router)
         self.assertNotIn("RT1_REAL_PROVIDER_FALLBACK", js)
