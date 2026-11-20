@@ -38,6 +38,10 @@ PROBES = (
     Probe("owner_rt1_denied", "GET", "/rt1", None, False),
     Probe("owner_bootstrap_denied", "GET", "/api/bootstrap", None, False),
     Probe("owner_publish_denied", "POST", "/api/rt1/owner/publish", "same", False),
+    # A deliberately invalid visitor lookup must reach the canonical backend
+    # with same-origin CSRF and return a typed JSON denial, not edge HTML.
+    # No owner key, visitor secret or provider allocation is used.
+    Probe("visitor_same_origin_reaches_backend", "POST", "/api/rt1/visitor/status", "same", True),
     Probe("visitor_post_without_origin_denied", "POST", "/api/rt1/visitor/status", None, False),
     Probe("visitor_post_cross_origin_denied", "POST", "/api/rt1/visitor/status", "https://attacker.example.org", False),
     Probe("visitor_post_wrong_method_denied", "GET", "/api/rt1/visitor/start", None, False),
@@ -127,6 +131,12 @@ def run(origin: str, timeout: float = 7.0) -> dict:
             valid = status == 403 and not body.lstrip().startswith(b"{")
         if probe.name == "visitor_post_wrong_method_denied":
             valid = status == 403
+        if probe.name == "visitor_same_origin_reaches_backend":
+            try:
+                payload = json.loads(body)
+                valid = 400 <= status < 600 and isinstance(payload.get("code"), str)
+            except (ValueError, TypeError, AttributeError):
+                valid = False
         if probe.name == "visitor_page":
             valid = valid and b'id="visitor-panel"' in body and len(body) <= 512 * 1024
         if probe.name == "visitor_bootstrap":
