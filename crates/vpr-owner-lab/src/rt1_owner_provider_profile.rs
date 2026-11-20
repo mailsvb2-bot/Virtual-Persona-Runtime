@@ -114,3 +114,62 @@ fn load_private_profile(
     profile.validate(owner_id)?;
     Ok(profile)
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    #[test]
+    fn private_owner_profiles_are_isolated_and_fail_closed() {
+        let mut nonce = [0_u8; 8];
+        getrandom::fill(&mut nonce).unwrap();
+        let unique = u64::from_be_bytes(nonce);
+        let dir = env::temp_dir().join(format!("vpr-owner-provider-{}-{unique}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let a = "a".repeat(32);
+        let b = "b".repeat(32);
+        let mut profile = ProviderCredentialProfile::canonical_rt0(
+            "avatar-token",
+            "agent-a",
+            "stt-token".into(),
+            "llm-token".into(),
+        );
+        profile.set_tts(crate::StoredTtsCredential {
+            provider: "openai-speech".into(),
+            endpoint: "https://api.openai.com/v1/audio/speech".into(),
+            api_key: "tts-token".into(),
+            model: "tts-1".into(),
+            voice: "alloy".into(),
+        }).unwrap();
+        let raw = serde_json::json!({
+            "schema_version": PROFILE_SCHEMA,
+            "owner_id": a,
+            "profile": profile,
+            "worker_endpoint": "https://worker.example.test",
+            "worker_token": "worker-owner-a"
+        }).to_string();
+        let path_a = dir.join(format!("{a}.json"));
+        fs::write(&path_a, raw).unwrap();
+        fs::set_permissions(&path_a, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(load_private_profile(&dir, &a).unwrap().owner_id, a);
+        assert!(load_private_profile(&dir, &b).is_err());
+
+        let path_b = dir.join(format!("{b}.json"));
+        symlink(&path_a, &path_b).unwrap();
+        assert!(load_private_profile(&dir, &b).is_err());
+        fs::remove_file(&path_b).unwrap();
+
+        fs::set_permissions(&path_a, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(load_private_profile(&dir, &a).is_err());
+        fs::set_permissions(&path_a, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(load_private_profile(&dir, &a).is_err());
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::remove_file(path_a).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
+}
