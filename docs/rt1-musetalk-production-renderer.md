@@ -341,6 +341,15 @@ is **only a compute acceptance**; browser RTP synchronization, real visitor
 conversation, interruption and verified two-track STOP remain separately
 required. Never copy this JSON into a production-publication certificate.
 
+The real CUDA run now validates all generated windows as **uniform,
+non-empty uint8 BGR frames** (not merely three-channel tensors). Its
+non-sensitive JSON evidence records frame count, width, height, pixel format,
+measured peak allocated CUDA memory and total GPU memory. Those metrics help
+size a temporary GPU trial; they **do not** prove facial quality, real
+speech-to-lip alignment, transport readiness or production capacity. Actual
+browser A/V timing, dual-track STOP, licensing, owner/visitor acceptance and
+multi-session load remain separate release gates.
+
 ## Real CUDA compute acceptance (not a browser release certificate)
 
 On the GPU host after installing operator-approved weights/assets and pinning
