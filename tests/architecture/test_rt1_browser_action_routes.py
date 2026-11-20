@@ -94,7 +94,8 @@ class Rt1BrowserActions(unittest.TestCase):
             encoding="utf-8"
         )
         js = (UI / "rt1.js").read_text(encoding="utf-8")
-        self.assertIn('"diagnostic_rtp": verified_worker::selected() ||', start)
+        self.assertRegex(start, r'"diagnostic_rtp": verified_worker::selected\(\)\s*\|\|')
+        self.assertIn('std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true")', start)
         self.assertIn('if (start.diagnostic_rtp === false)', js)
         self.assertIn('await waitForIceGathering(connection)', js)
         self.assertIn('if self.remote.is_some() {', signaling)

@@ -4,7 +4,7 @@ use super::{
     AppState, HttpResponse, ProviderBundle, RegistrationFailure, Rt1OwnerController,
     Rt1RemoteMediaRevocation, Rt1VisitorConversation, VisitorStart, error_response,
     finalize_registered_stop, json_response, new_visitor_session_id, parse_json, register_visitor,
-    restore_reviewed_persona, startup_errors, verified_worker,
+    restore_reviewed_persona_for_visitor, startup_errors, verified_worker,
 };
 use std::sync::Arc;
 
@@ -119,7 +119,36 @@ fn admitted_visitor_manager(
     manager
         .preflight_visitor(token)
         .map_err(|_| error_response(409, "RT1_VISITOR_ACCESS_DENIED"))?;
+    // Never allocate any provider or remote media for a secondary owner
+    // while the legacy provider stack still has primary-only credentials.
+    Rt1OwnerController::new()
+        .require_legacy_provider_owner(token)
+        .map_err(|_| error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"))?;
     Ok(manager)
+}
+
+// Serialize the already-authorized visitor grant without extending the
+// provider START critical section or changing its STOP ownership.
+fn visitor_start_grant(
+    session_id: &str,
+    bundle: impl serde::Serialize,
+    voice_enabled: bool,
+    conversation: Arc<Rt1VisitorConversation>,
+) -> (HttpResponse, Arc<Rt1VisitorConversation>) {
+    (
+        json_response(
+            200,
+            &serde_json::json!({
+                "session_id": session_id,
+                "signal": bundle,
+                "voice_enabled": voice_enabled,
+                // Worker/diagnostic SDP already contains ICE candidates.
+                "diagnostic_rtp": verified_worker::selected()
+                    || std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
+            }),
+        ),
+        conversation,
+    )
 }
 
 pub(super) fn visitor_start(
@@ -135,9 +164,8 @@ pub(super) fn visitor_start(
     let (providers, worker) = selected_provider_bundle(&session_id)?;
     let mut engine = super::super::engine_bootstrap::assemble(providers, true)
         .map_err(|_| error_response(503, "RT1_ENGINE_UNAVAILABLE"))?;
-    if !matches!(restore_reviewed_persona(&mut engine), Ok(true)) {
-        return Err(error_response(409, "RT1_PERSONA_NOT_REVIEWED"));
-    }
+    restore_reviewed_persona_for_visitor(&mut engine, &body.visitor_token)
+        .map_err(|_| error_response(409, "RT1_PERSONA_NOT_REVIEWED"))?;
     bind_optional_memory_on_start(&mut engine, body.memory_token.as_deref())?;
     let started = if let Some(worker) = worker {
         let retry_id = session_id.clone();
@@ -223,20 +251,32 @@ pub(super) fn visitor_start(
         }
         return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
     }
-    Ok((
-        json_response(
-            200,
-            &serde_json::json!({
-                "session_id": session_id,
-                "signal": bundle,
-                "voice_enabled": voice_enabled,
-                // The existing aiortc operation worker performs non-trickle ICE:
-                // candidates are embedded in SDP, and its separate ICE endpoint
-                // is intentionally denied. Preserve the browser's non-trickle
-                // signaling mode for both worker and diagnostic RTP paths.
-                "diagnostic_rtp": verified_worker::selected() || std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
-            }),
-        ),
+    Ok(visitor_start_grant(
+        &session_id,
+        bundle,
+        voice_enabled,
         conversation,
     ))
+}
+
+pub(super) fn validate_legacy_owner_publication(
+    owner_token: &str,
+    expected_version: u64,
+) -> Result<vpr_owner_lab::WorkspaceStatus, HttpResponse> {
+    // Resolve the owner solely from the canonical credential; this global
+    // provider stack is not safe for an additional owner's Persona.
+    let controller = Rt1OwnerController::new();
+    let owner = controller
+        .status(owner_token)
+        .map_err(|_| error_response(403, "RT1_OWNER_ACTION_DENIED"))?;
+    if owner.persona_version != expected_version {
+        return Err(error_response(409, "RT1_STALE_PERSONA_VERSION"));
+    }
+    let primary = controller
+        .current_persona_identity()
+        .map_err(|_| error_response(503, "RT1_OWNER_ENGINE_UNAVAILABLE"))?;
+    if (owner.persona_id.as_str(), owner.persona_version) != (primary.0.as_str(), primary.1) {
+        return Err(error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"));
+    }
+    Ok(owner)
 }

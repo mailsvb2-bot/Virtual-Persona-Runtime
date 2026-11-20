@@ -7,7 +7,7 @@ use parking_lot::{Condvar, Mutex};
 use serde::Deserialize;
 use vpr_owner_lab::{
     OwnerContextState, ProviderBundle, Rt1OwnerController, Rt1RemoteMediaRevocation,
-    Rt1VisitorConversation, restore_reviewed_persona,
+    Rt1VisitorConversation, restore_reviewed_persona_for_visitor,
 };
 
 use super::{AppState, HttpResponse, error_response, json_response, parse_json};
@@ -34,8 +34,6 @@ pub(super) fn static_get_response(path: &str) -> Option<HttpResponse> {
             include_str!("../ui/rt1.html"),
             "text/html; charset=utf-8",
         )),
-        // The visitor entry reuses the canonical local page response and
-        // preserves the original /rt1 route contract (no second renderer).
         "/rt1/visit" => static_get_response("/rt1"),
         "/rt1.js" => Some(super::static_response(
             include_str!("../ui/rt1.js"),
@@ -52,8 +50,6 @@ pub(super) fn static_get_response(path: &str) -> Option<HttpResponse> {
 #[derive(Default)]
 pub(super) struct Rt1HttpState {
     conversations: Mutex<HashMap<String, Arc<Rt1VisitorConversation>>>,
-    // An identity must be reserved BEFORE provider CREATE; collisions are not
-    // repaired by overwriting an existing remote STOP retry handle.
     pending_starts: Mutex<HashSet<String>>,
     // Retained BEFORE remote CREATE, even if no browser session ID is returned.
     // Never hold this registry lock while doing provider network I/O.
@@ -264,18 +260,24 @@ fn owner_status(request: &mut tiny_http::Request) -> Rt1HttpResult {
 
 fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
     let body: OwnerPublish = parse_json(request)?;
+    public_origin::publication_qualification()
+        .map_err(startup_errors::publication_error_response)?;
+    let owner =
+        start::validate_legacy_owner_publication(&body.owner_token, body.expected_persona_version)?;
     let readiness = || -> Result<(), String> {
         public_origin::publication_qualification().map_err(str::to_owned)?;
         let engine = state.engine.lock().map_err(|_| "RT1_ENGINE_UNAVAILABLE")?;
         let status = engine.status();
-        // Provider construction is independent of the owner engine; never
-        // hold its lock while validating publication dependencies.
+        let binding = engine.reviewed_persona_binding();
+        if !binding.is_some_and(|(persona_id, version)| {
+            persona_id == owner.persona_id && version == owner.persona_version
+        }) {
+            return Err("RT1_OWNER_ENGINE_PERSONA_MISMATCH".into());
+        }
         drop(engine);
         if !status.egress_enabled || status.owner_context_state != OwnerContextState::Reviewed {
             return Err("RT1_REVIEWED_PERSONA_AND_EGRESS_REQUIRED".into());
         }
-        // Match visitor_start's allowlist before creating a public visitor
-        // token; never publish an invitation guaranteed to fail on START.
         let endpoint = std::env::var("RT1_WORKER_ENDPOINT").ok();
         let token = std::env::var("RT1_WORKER_TOKEN").ok();
         start::publication_media_transport_ready(
@@ -285,9 +287,6 @@ fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
             token.as_deref(),
         )
         .map_err(str::to_owned)?;
-        // The presence of worker credentials alone does not guarantee that
-        // the SAME canonical STT/LLM/TTS path used by visitor START can run.
-        // Check it before issuing a public invitation, without remote CREATE.
         start::publication_voice_provider_ready().map_err(str::to_owned)
     };
     let visitor_token = Rt1OwnerController::new()

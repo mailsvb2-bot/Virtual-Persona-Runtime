@@ -159,6 +159,23 @@ pub fn restore_reviewed_persona(engine: &mut OwnerLabEngine) -> Result<bool, Str
     Ok(true)
 }
 
+/// Restore the exact tenant Persona authorized by the visitor bearer.
+/// Read-only: the canonical admission/egress fence still runs at START.
+///
+/// # Errors
+/// Rejects invalid visitor credentials, unavailable canonical storage, or an
+/// invalid persisted reviewed Persona.
+pub fn restore_reviewed_persona_for_visitor(
+    engine: &mut OwnerLabEngine,
+    visitor_token: &str,
+) -> Result<(), String> {
+    let snapshot = crate::rt1_workspace_service::Rt1WorkspaceService::new()
+        .reviewed_snapshot_for_visitor(visitor_token)?;
+    engine
+        .restore_reviewed_owner_context(&snapshot)
+        .map_err(|_| "persisted reviewed Persona is invalid".to_owned())
+}
+
 /// Persists a completed reviewed capture using the exact retained domain history.
 /// # Errors
 /// Returns a redacted validation or durable-store error.

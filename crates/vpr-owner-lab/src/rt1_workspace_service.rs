@@ -78,6 +78,39 @@ impl Rt1WorkspaceService {
         Ok((record.snapshot.persona_id, record.snapshot.persona_version))
     }
 
+    /// Select a reviewed Persona using ONLY the canonical server-issued visitor
+    /// bearer. Never restore the process-global owner Persona into a visitor
+    /// engine selected by another account's publication.
+    pub(crate) fn reviewed_snapshot_for_visitor(
+        &self,
+        bearer_token: &str,
+    ) -> Result<crate::owner_context::DurableReviewedOwnerContextSnapshot, String> {
+        crate::persona_store_lease::require_live_runtime_owner()?;
+        let _transaction = persona_transaction::begin_workspace(self.transaction)?;
+        let record = required_persona()?;
+        snapshot_for_visitor_in_record(&record, bearer_token, server_now_millis()?)
+    }
+
+    /// Reject a secondary tenant before any shared provider credentials are used.
+    ///
+    /// # Errors
+    /// Rejects unauthorized or stale visitor tokens, secondary owners, or
+    /// an unavailable canonical Persona store.
+    pub fn require_legacy_provider_owner(&self, bearer_token: &str) -> Result<(), String> {
+        crate::persona_store_lease::require_live_runtime_owner()?;
+        let _transaction = persona_transaction::begin_workspace(self.transaction)?;
+        let record = required_persona()?;
+        let primary = record.workspace.as_ref().ok_or("primary owner missing")?;
+        admit_from_workspace(
+            primary,
+            bearer_token,
+            &record.snapshot.persona_id,
+            record.snapshot.persona_version,
+            server_now_millis()?,
+        )?;
+        Ok(())
+    }
+
     /// Server-side owner identification by a secret that has never been stored
     /// in plaintext. The old anonymous Owner Lab CSRF token is not an account.
     ///
@@ -101,13 +134,14 @@ impl Rt1WorkspaceService {
     ) -> Result<String, String> {
         let _transaction = persona_transaction::begin_workspace(self.transaction)?;
         let mut record = required_persona()?;
-        if record.snapshot.persona_version != expected_persona_version {
+        let (workspace, persona_id, persona_version) =
+            authenticated_owner_workspace_mut(&mut record, owner_token)?;
+        if persona_version != expected_persona_version {
             return Err("stale Persona version".into());
         }
-        let workspace = record.workspace.as_mut().ok_or("owner workspace missing")?;
         let visitor_token = workspace.publish(
             owner_token,
-            &record.snapshot.persona_id,
+            &persona_id,
             expected_persona_version,
             server_readiness_verified,
         )?;
@@ -166,8 +200,17 @@ impl Rt1WorkspaceService {
     pub fn visitor_permit(&self, bearer_token: &str) -> Result<VisitorPermit, String> {
         let _transaction = persona_transaction::begin_workspace(self.transaction)?;
         let record = required_persona()?;
-        let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
-        workspace.visitor_permit(bearer_token)
+        if let Some(primary) = &record.workspace {
+            if let Ok(permit) = primary.visitor_permit(bearer_token) {
+                return Ok(permit);
+            }
+        }
+        for additional in record.additional_owner_personas.values() {
+            if let Ok(permit) = additional.workspace.visitor_permit(bearer_token) {
+                return Ok(permit);
+            }
+        }
+        Err("visitor authorization denied".into())
     }
 
     /// Atomically mint and validate a permit against one canonical Persona
@@ -183,14 +226,7 @@ impl Rt1WorkspaceService {
     ) -> Result<VisitorPermit, String> {
         let _transaction = persona_transaction::begin_workspace(self.transaction)?;
         let record = required_persona()?;
-        let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
-        admit_from_workspace(
-            workspace,
-            bearer_token,
-            &record.snapshot.persona_id,
-            record.snapshot.persona_version,
-            now_millis,
-        )
+        admit_visitor_in_record(&record, bearer_token, now_millis)
     }
 
     /// Re-read authoritative durable state on EVERY visitor operation, not
@@ -207,14 +243,8 @@ impl Rt1WorkspaceService {
     ) -> Result<(), String> {
         let _transaction = persona_transaction::begin_workspace(self.transaction)?;
         let record = required_persona()?;
-        let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
-        workspace.authorize_visitor(
-            bearer_token,
-            permit,
-            &record.snapshot.persona_id,
-            record.snapshot.persona_version,
-            now_millis,
-        )
+        let (workspace, persona_id, version) = published_visitor_workspace(&record, permit)?;
+        workspace.authorize_visitor(bearer_token, permit, persona_id, version, now_millis)
     }
 
     /// Recheck canonical visitor authority around a pure buffered computation.
@@ -256,11 +286,11 @@ impl Rt1WorkspaceService {
     ) -> Result<(), String> {
         let _transaction = persona_transaction::begin_workspace(self.transaction)?;
         let record = required_persona()?;
-        let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
+        let (workspace, persona_id, version) = published_visitor_workspace(&record, permit)?;
         enqueue_from_workspace(
             workspace,
             (bearer_token, permit),
-            (&record.snapshot.persona_id, record.snapshot.persona_version),
+            (persona_id, version),
             server_now_millis()?,
             sender,
             fragment,
@@ -283,12 +313,12 @@ impl Rt1WorkspaceService {
         crate::persona_store_lease::require_live_runtime_owner()?;
         let _transaction = persona_transaction::begin_workspace(self.transaction)?;
         let record = required_persona()?;
-        let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
+        let (workspace, persona_id, version) = published_visitor_workspace(&record, permit)?;
         workspace.authorize_visitor(
             bearer_token,
             permit,
-            &record.snapshot.persona_id,
-            record.snapshot.persona_version,
+            persona_id,
+            version,
             server_now_millis()?,
         )?;
         register()
@@ -306,8 +336,11 @@ impl Rt1WorkspaceService {
         };
         if let Some(workspace) = record.workspace.as_mut() {
             workspace.invalidate_restart_leases()?;
-            commit_current_record(&record)?;
         }
+        for additional in record.additional_owner_personas.values_mut() {
+            additional.workspace.invalidate_restart_leases()?;
+        }
+        commit_current_record(&record)?;
         Ok(())
     }
 
@@ -319,7 +352,7 @@ impl Rt1WorkspaceService {
     ) -> Result<PendingVisitorRevocations, String> {
         let _transaction = persona_transaction::begin_workspace(self.transaction)?;
         let mut record = required_persona()?;
-        let workspace = record.workspace.as_mut().ok_or("owner workspace missing")?;
+        let (workspace, _, _) = authenticated_owner_workspace_mut(&mut record, owner_token)?;
         operation(workspace, owner_token)?;
         let revoked_owner_id = workspace.owner_id.clone();
         // Never stop a transport for a mutation that failed to commit.
@@ -337,7 +370,7 @@ impl Rt1WorkspaceService {
     ) -> Result<(), String> {
         let _transaction = persona_transaction::begin_workspace(self.transaction)?;
         let mut record = required_persona()?;
-        let workspace = record.workspace.as_mut().ok_or("owner workspace missing")?;
+        let (workspace, _, _) = authenticated_owner_workspace_mut(&mut record, owner_token)?;
         operation(workspace, owner_token)?;
         commit_current_record(&record)
     }
@@ -387,6 +420,125 @@ fn guard_buffered_output<T>(
 
 fn required_persona() -> Result<PersistedPersonaV2, String> {
     load_current_record()?.ok_or("reviewed Persona required".into())
+}
+
+/// Route mutation through credential-authenticated canonical owner data.
+/// Never trust a browser-supplied owner identifier or default to primary.
+fn authenticated_owner_workspace_mut<'a>(
+    record: &'a mut PersistedPersonaV2,
+    owner_token: &str,
+) -> Result<(&'a mut OwnerWorkspaceRecord, String, u64), String> {
+    if let Some(primary) = record.workspace.as_mut() {
+        if primary.authenticate_owner(owner_token) {
+            return Ok((
+                primary,
+                record.snapshot.persona_id.clone(),
+                record.snapshot.persona_version,
+            ));
+        }
+    }
+    for additional in record.additional_owner_personas.values_mut() {
+        if additional.workspace.authenticate_owner(owner_token) {
+            return Ok((
+                &mut additional.workspace,
+                additional.snapshot.persona_id.clone(),
+                additional.snapshot.persona_version,
+            ));
+        }
+    }
+    Err("owner authorization denied".into())
+}
+
+/// The visitor permit fixes tenant identity; no fallback to another tenant
+/// after permit issuance, even if the original owner was paused/revoked.
+fn published_visitor_workspace<'a>(
+    record: &'a PersistedPersonaV2,
+    permit: &VisitorPermit,
+) -> Result<(&'a OwnerWorkspaceRecord, &'a str, u64), String> {
+    if let Some(primary) = &record.workspace {
+        if primary.owner_id == permit.owner_id() {
+            return Ok((
+                primary,
+                &record.snapshot.persona_id,
+                record.snapshot.persona_version,
+            ));
+        }
+    }
+    let owned = record
+        .additional_owner_personas
+        .get(permit.owner_id())
+        .ok_or("visitor owner not found")?;
+    Ok((
+        &owned.workspace,
+        &owned.snapshot.persona_id,
+        owned.snapshot.persona_version,
+    ))
+}
+
+fn admit_visitor_in_record(
+    record: &PersistedPersonaV2,
+    bearer_token: &str,
+    now_millis: u64,
+) -> Result<VisitorPermit, String> {
+    if let Some(primary) = &record.workspace {
+        if let Ok(permit) = admit_from_workspace(
+            primary,
+            bearer_token,
+            &record.snapshot.persona_id,
+            record.snapshot.persona_version,
+            now_millis,
+        ) {
+            return Ok(permit);
+        }
+    }
+    for additional in record.additional_owner_personas.values() {
+        if let Ok(permit) = admit_from_workspace(
+            &additional.workspace,
+            bearer_token,
+            &additional.snapshot.persona_id,
+            additional.snapshot.persona_version,
+            now_millis,
+        ) {
+            return Ok(permit);
+        }
+    }
+    Err("visitor authorization denied".into())
+}
+
+/// A pure lookup against an already validated canonical envelope. Denies
+/// unknown, expired, paused or stale visitor tokens before selecting a Persona.
+fn snapshot_for_visitor_in_record(
+    record: &PersistedPersonaV2,
+    bearer_token: &str,
+    now_millis: u64,
+) -> Result<crate::owner_context::DurableReviewedOwnerContextSnapshot, String> {
+    if let Some(workspace) = &record.workspace {
+        if admit_from_workspace(
+            workspace,
+            bearer_token,
+            &record.snapshot.persona_id,
+            record.snapshot.persona_version,
+            now_millis,
+        )
+        .is_ok()
+        {
+            return Ok(record.snapshot.clone());
+        }
+    }
+    for additional in record.additional_owner_personas.values() {
+        if admit_from_workspace(
+            &additional.workspace,
+            bearer_token,
+            &additional.snapshot.persona_id,
+            additional.snapshot.persona_version,
+            now_millis,
+        )
+        .is_ok()
+        {
+            return Ok(additional.snapshot.clone());
+        }
+    }
+    Err("visitor authorization denied".into())
 }
 
 /// The admission decision uses one immutable canonical record while the

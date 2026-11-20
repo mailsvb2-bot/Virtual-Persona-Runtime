@@ -43,6 +43,14 @@ impl Rt1OwnerController {
         self.workspace.current_persona_identity()
     }
 
+    /// The legacy provider stack is not yet tenant-scoped.
+    ///
+    /// # Errors
+    /// Rejects unknown, revoked, or non-primary visitor publication authority.
+    pub fn require_legacy_provider_owner(&self, visitor_token: &str) -> Result<(), String> {
+        self.workspace.require_legacy_provider_owner(visitor_token)
+    }
+
     /// Share the exact in-process visitor registry with the eventual runtime.
     /// All owner revoke and visitor admission calls must use this same instance.
     #[must_use]
