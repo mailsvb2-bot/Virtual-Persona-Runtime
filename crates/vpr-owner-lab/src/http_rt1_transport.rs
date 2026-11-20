@@ -67,6 +67,54 @@ impl Rt1HttpState {
     }
 }
 
+/// Preserve the canonical visitor release fence on every route, including
+/// old invite/session credentials, while keeping STOP, CLOSE, and subject
+/// privacy controls reachable even when a public origin is not qualified.
+pub(super) fn blocked_visitor_route(path: &str) -> Option<&'static str> {
+    requires_release_qualification(path)
+        .then(super::public_origin::publication_qualification)
+        .and_then(Result::err)
+}
+
+fn requires_release_qualification(path: &str) -> bool {
+    path.starts_with("/api/rt1/visitor/")
+        && !matches!(
+            path,
+            "/api/rt1/visitor/close"
+                | "/api/rt1/visitor/interrupt"
+                | "/api/rt1/visitor/memory/consent"
+                | "/api/rt1/visitor/memory/erase"
+                | "/api/rt1/visitor/memory/revoke"
+                | "/api/rt1/visitor/memory/rotate"
+        )
+}
+
+#[cfg(test)]
+mod public_release_route_tests {
+    use super::requires_release_qualification;
+
+    #[test]
+    fn no_public_provider_route_can_bypass_qualification() {
+        for action in [
+            "start", "answer", "ice", "text", "voice", "status",
+            "memory/connect", "memory/remember",
+        ] {
+            assert!(requires_release_qualification(&format!("/api/rt1/visitor/{action}")));
+        }
+        for path in [
+            "/api/rt1/visitor/close",
+            "/api/rt1/visitor/interrupt",
+            "/api/rt1/visitor/memory/consent",
+            "/api/rt1/visitor/memory/erase",
+            "/api/rt1/visitor/memory/revoke",
+            "/api/rt1/visitor/memory/rotate",
+            "/api/rt1/owner/publish",
+        ] {
+            assert!(!requires_release_qualification(path));
+        }
+    }
+}
+
 pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<super::AppState>) {
     let transport_id = request
         .headers()
