@@ -88,6 +88,7 @@ class PublicEdgeProbeTests(unittest.TestCase):
         allowed = {p.path for p in probe.PROBES if p.allowed}
         self.assertEqual(allowed, {
             "/rt1/visit", "/api/rt1/visitor/bootstrap", "/mic-worklet.js",
+            "/api/rt1/visitor/status",
         })
         self.assertTrue(all(not p.path.startswith("/api/rt1/owner/") or not p.allowed
                             for p in probe.PROBES))
