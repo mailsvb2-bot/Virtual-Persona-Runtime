@@ -1,7 +1,7 @@
 //! Operator-provisioned credentials for one canonical owner. Secrets are never
 //! persisted in the Persona envelope or returned from owner/visitor HTTP APIs.
 //! The legacy environment provider path is only permitted for the primary owner.
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::env;
 
 use crate::ProviderCredentialProfile;
@@ -13,7 +13,7 @@ const WINDOWS_SERVICE: &str = "Virtual-Persona-Runtime";
 #[cfg(windows)]
 const WINDOWS_OWNER_PREFIX: &str = "rt1-owner-provider-v1";
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OwnerProviderProfile {
     schema_version: String,
