@@ -88,30 +88,8 @@ impl Rt1WorkspaceService {
         crate::persona_store_lease::require_live_runtime_owner()?;
         let _transaction = persona_transaction::begin_workspace(self.transaction)?;
         let record = required_persona()?;
-        let now = server_now_millis()?;
-        if let Some(workspace) = &record.workspace {
-            if admit_from_workspace(
-                workspace,
-                bearer_token,
-                &record.snapshot.persona_id,
-                record.snapshot.persona_version,
-                now,
-            ).is_ok() {
-                return Ok(record.snapshot);
-            }
-        }
-        for additional in record.additional_owner_personas.values() {
-            if admit_from_workspace(
-                &additional.workspace,
-                bearer_token,
-                &additional.snapshot.persona_id,
-                additional.snapshot.persona_version,
-                now,
-            ).is_ok() {
-                return Ok(additional.snapshot.clone());
-            }
-        }
-        Err("visitor authorization denied".into())
+        snapshot_for_visitor_in_record(&record, bearer_token, server_now_millis()?)
+
     }
 
     /// Server-side owner identification by a secret that has never been stored
@@ -423,6 +401,42 @@ fn guard_buffered_output<T>(
 
 fn required_persona() -> Result<PersistedPersonaV2, String> {
     load_current_record()?.ok_or("reviewed Persona required".into())
+}
+
+/// A pure lookup against an already validated canonical envelope. Denies
+/// unknown, expired, paused or stale visitor tokens before selecting a Persona.
+fn snapshot_for_visitor_in_record(
+    record: &PersistedPersonaV2,
+    bearer_token: &str,
+    now_millis: u64,
+) -> Result<crate::owner_context::DurableReviewedOwnerContextSnapshot, String> {
+    if let Some(workspace) = &record.workspace {
+        if admit_from_workspace(
+            workspace,
+            bearer_token,
+            &record.snapshot.persona_id,
+            record.snapshot.persona_version,
+            now_millis,
+        )
+        .is_ok()
+        {
+            return Ok(record.snapshot.clone());
+        }
+    }
+    for additional in record.additional_owner_personas.values() {
+        if admit_from_workspace(
+            &additional.workspace,
+            bearer_token,
+            &additional.snapshot.persona_id,
+            additional.snapshot.persona_version,
+            now_millis,
+        )
+        .is_ok()
+        {
+            return Ok(additional.snapshot.clone());
+        }
+    }
+    Err("visitor authorization denied".into())
 }
 
 /// The admission decision uses one immutable canonical record while the
