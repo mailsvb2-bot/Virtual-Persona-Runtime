@@ -19,9 +19,9 @@ any backend API is called, and is never part of the GET URL or Nginx log path.
 - `GET /api/rt1/visitor/bootstrap` returns **only** the CSRF token to the
   visitor (no Owner Lab voice profile, evidence mode or other bootstrap state).
 - The Nginx example `deploy/rt1-public-visitor.nginx.conf.template` is an
-  **explicit allowlist**. Only visitor HTML, two RT1 assets, the pinned LiveKit
-  client, minimal bootstrap GET and eight canonical visitor POST routes are
-  forwarded. Owner Lab UI `/`, `/rt1`, capture, owner APIs, evidence, admin,
+  **explicit allowlist**. Only visitor HTML, RT1 JS/CSS, the existing microphone
+  AudioWorklet, the pinned LiveKit client, minimal bootstrap GET and eight
+  canonical visitor POST routes are forwarded. Owner Lab UI `/`, `/rt1`, capture, owner APIs, evidence, admin,
   raw bootstrap and all unknown routes are not forwarded.
 - Incoming public POSTs require the exact external HTTPS `Origin`; the edge
   then rewrites Host/Origin for the **existing loopback-only** CSRF parser.
