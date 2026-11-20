@@ -273,6 +273,15 @@ fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
     if owner.persona_version != body.expected_persona_version {
         return Err(error_response(409, "RT1_STALE_PERSONA_VERSION"));
     }
+    // Existing Owner Lab/provider credentials remain primary-owner only.
+    let primary_persona = Rt1OwnerController::new()
+        .current_persona_identity()
+        .map_err(|_| error_response(503, "RT1_OWNER_ENGINE_UNAVAILABLE"))?;
+    if (owner.persona_id.as_str(), owner.persona_version)
+        != (primary_persona.0.as_str(), primary_persona.1)
+    {
+        return Err(error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"));
+    }
     let readiness = || -> Result<(), String> {
         public_origin::publication_qualification().map_err(str::to_owned)?;
         let engine = state.engine.lock().map_err(|_| "RT1_ENGINE_UNAVAILABLE")?;
