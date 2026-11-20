@@ -30,7 +30,13 @@ pub(super) fn prepare(
     let (persona_id, persona_version) = Rt1OwnerController::new()
         .current_persona_identity()
         .map_err(|_| error_response(409, "RT1_PERSONA_NOT_REVIEWED"))?;
-    prepare_bound(operation_id, &endpoint, &token, &persona_id, persona_version)
+    prepare_bound(
+        operation_id,
+        &endpoint,
+        &token,
+        &persona_id,
+        persona_version,
+    )
 }
 
 /// Construct exactly the same authenticated worker/STOP adapter, but bind its
