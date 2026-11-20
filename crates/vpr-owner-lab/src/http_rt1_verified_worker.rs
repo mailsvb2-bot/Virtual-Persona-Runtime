@@ -30,8 +30,21 @@ pub(super) fn prepare(
     let (persona_id, persona_version) = Rt1OwnerController::new()
         .current_persona_identity()
         .map_err(|_| error_response(409, "RT1_PERSONA_NOT_REVIEWED"))?;
-    let client = RemoteOperationClient::new(&endpoint, &token, Duration::from_secs(5))
-        .and_then(|client| client.bind_persona(&persona_id, persona_version))
+    prepare_bound(operation_id, &endpoint, &token, &persona_id, persona_version)
+}
+
+/// Construct exactly the same authenticated worker/STOP adapter, but bind its
+/// Persona and credentials to an authenticated owner rather than a global
+/// environment variable. Never call this with browser-supplied identities.
+pub(super) fn prepare_bound(
+    operation_id: &str,
+    endpoint: &str,
+    token: &str,
+    persona_id: &str,
+    persona_version: u64,
+) -> Result<(Arc<Rt1RemoteMediaRevocation>, Box<OperationWorkerAvatar>), HttpResponse> {
+    let client = RemoteOperationClient::new(endpoint, token, Duration::from_secs(5))
+        .and_then(|client| client.bind_persona(persona_id, persona_version))
         .map_err(|_| error_response(503, "RT1_WORKER_CONFIGURATION_INVALID"))?;
     let remote = Arc::new(
         Rt1RemoteMediaRevocation::new(client.clone(), operation_id.to_owned(), 1)
