@@ -261,7 +261,7 @@ fn owner_status(request: &mut tiny_http::Request) -> Rt1HttpResult {
 fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
     let body: OwnerPublish = parse_json(request)?;
     public_origin::publication_qualification()
-        .map_err(|reason| startup_errors::publication_error_response(reason))?;
+        .map_err(startup_errors::publication_error_response)?;
     let owner =
         start::validate_legacy_owner_publication(&body.owner_token, body.expected_persona_version)?;
     let readiness = || -> Result<(), String> {
