@@ -1,10 +1,10 @@
 //! Explicit-owner provider composition. This is the same canonical bundle
 //! and adapter factory as legacy Owner Lab, but without global credentials.
+use super::tts_factory::build_tts_explicit;
 use super::{
     ProviderBundle, ProviderCredentialProfile, RealtimeAvatarPort, build_llm, build_stt,
     descriptor, ensure_avatar_pcm_compatible, required_value,
 };
-use super::tts_factory::build_tts_explicit;
 
 #[derive(Clone, Copy)]
 pub(super) enum ProviderSource {
@@ -83,4 +83,3 @@ pub(super) fn provider_value(
             .ok_or_else(|| format!("owner provider setting {name} missing")),
     }
 }
-
