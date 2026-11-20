@@ -31,6 +31,18 @@ fn publication_qualification_for(origin: Option<&str>) -> Result<(), &'static st
     Err("RT1_PUBLIC_RELEASE_QUALIFICATION_REQUIRED")
 }
 
+/// Deny every chargeable/public visitor operation when an unqualified
+/// HTTPS edge is configured, including tokens minted before configuration.
+/// Keep STOP/close reachable to drain an already allocated sender.
+pub(super) fn blocked_visitor_route(path: &str) -> Option<&'static str> {
+    if !path.starts_with("/api/rt1/visitor/")
+        || matches!(path, "/api/rt1/visitor/close" | "/api/rt1/visitor/interrupt")
+    {
+        return None;
+    }
+    publication_qualification().err()
+}
+
 /// Only an explicit HTTPS DNS origin is eligible for cross-device invites.
 /// No URL path, credentials, query, fragment, port, private IP or hostname
 /// tricks may redirect visitor bearer credentials off the approved origin.
