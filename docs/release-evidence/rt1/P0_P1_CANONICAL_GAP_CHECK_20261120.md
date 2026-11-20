@@ -58,8 +58,9 @@ the same route now fails closed with
 readiness or any new visitor bearer allocation**. The same canonical
 visitor router denies stale prior invitations and all new visitor
 START/ANSWER/ICE/TEXT/VOICE/MEMORY requests when the public-origin
-qualification is missing; STOP/CLOSE deliberately remain reachable to
-drain active workers. No configuration boolean pretends to certify a
+qualification is missing; STOP/CLOSE and existing privacy operations
+(consent, erase, credential revoke and rotation) deliberately remain
+reachable to drain active workers and preserve data-subject controls. No configuration boolean pretends to certify a
 real commercial release.
 
 Use `scripts/rt1_release_candidate_inventory.py` for an exact-head,
