@@ -42,6 +42,13 @@ impl Rt1VisitorSession {
         }
     }
 
+    /// The canonical owner identity retained in the publication permit.
+    /// The visitor has no authority to select or replace this identity.
+    #[must_use]
+    pub(crate) fn owner_id(&self) -> &str {
+        self.permit.owner_id()
+    }
+
     /// # Errors
     /// Rejects revoked, expired, or version-stale authority.
     pub fn authorize(&self) -> Result<(), String> {
