@@ -20,7 +20,11 @@ pub struct OwnerProviderProfile {
 }
 
 impl OwnerProviderProfile {
-    fn validate(&self, owner_id: &str) -> Result<(), String> {
+    /// Verify profile schema and exact owner binding on every platform.
+    ///
+    /// # Errors
+    /// Rejects mismatched owner identity and incomplete or invalid credentials.
+    pub fn validate(&self, owner_id: &str) -> Result<(), String> {
         if self.schema_version != PROFILE_SCHEMA
             || self.owner_id != owner_id
             || self.worker_endpoint.trim().is_empty()
