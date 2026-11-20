@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -38,6 +39,15 @@ struct PersistedPersonaV1 {
     snapshot: ReviewedOwnerContextSnapshot,
 }
 
+/// An additional owner has its own reviewed Persona and publication state,
+/// retained in the SAME atomic canonical envelope as the legacy owner.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AdditionalOwnerPersona {
+    pub(crate) snapshot: DurableReviewedOwnerContextSnapshot,
+    pub(crate) workspace: OwnerWorkspaceRecord,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PersistedPersonaV2 {
@@ -45,6 +55,8 @@ pub(crate) struct PersistedPersonaV2 {
     pub(crate) snapshot: DurableReviewedOwnerContextSnapshot,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) workspace: Option<OwnerWorkspaceRecord>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) additional_owner_personas: BTreeMap<String, AdditionalOwnerPersona>,
 }
 
 impl PersistedPersonaV2 {
@@ -53,6 +65,7 @@ impl PersistedPersonaV2 {
             schema_version: STORE_SCHEMA_V2.into(),
             snapshot,
             workspace: None,
+            additional_owner_personas: BTreeMap::new(),
         }
     }
 
@@ -81,6 +94,7 @@ impl PersistedPersonaV2 {
                     return Err("canonical Persona same-version write conflict".into());
                 }
                 next.workspace = old.workspace;
+                next.additional_owner_personas = old.additional_owner_personas;
                 if old.snapshot.persona_version < next.snapshot.persona_version {
                     if let Some(workspace) = next.workspace.as_mut() {
                         workspace.on_persona_correction(next.snapshot.persona_version)?;
@@ -98,8 +112,28 @@ impl PersistedPersonaV2 {
         if self.schema_version != STORE_SCHEMA_V2 {
             return Err("reviewed Persona store schema is unsupported".into());
         }
+        let mut known_owner_ids = HashSet::new();
+        let mut known_persona_ids = HashSet::new();
+        known_persona_ids.insert(self.snapshot.persona_id.as_str());
         if let Some(workspace) = &self.workspace {
             workspace.validate(&self.snapshot.persona_id, self.snapshot.persona_version)?;
+            known_owner_ids.insert(workspace.owner_id.as_str());
+        }
+        for (owner_id, record) in &self.additional_owner_personas {
+            // Never trust a map key as authority: it must match the owner
+            // identity sealed into that exact Persona publication record.
+            if owner_id != &record.workspace.owner_id
+                || !known_owner_ids.insert(owner_id.as_str())
+                || !known_persona_ids.insert(record.snapshot.persona_id.as_str())
+            {
+                return Err("duplicate or mismatched canonical owner/Persona identity".into());
+            }
+            ReviewedOwnerContext::from_durable_snapshot(&record.snapshot)
+                .map_err(|_| "additional reviewed Persona is invalid")?;
+            record.workspace.validate(
+                &record.snapshot.persona_id,
+                record.snapshot.persona_version,
+            )?;
         }
         Ok(self.snapshot)
     }
