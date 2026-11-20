@@ -240,13 +240,7 @@ impl Rt1WorkspaceService {
         let _transaction = persona_transaction::begin_workspace(self.transaction)?;
         let record = required_persona()?;
         let (workspace, persona_id, version) = published_visitor_workspace(&record, permit)?;
-        workspace.authorize_visitor(
-            bearer_token,
-            permit,
-            persona_id,
-            version,
-            now_millis,
-        )
+        workspace.authorize_visitor(bearer_token, permit, persona_id, version, now_millis)
     }
 
     /// Recheck canonical visitor authority around a pure buffered computation.
@@ -459,7 +453,11 @@ fn published_visitor_workspace<'a>(
 ) -> Result<(&'a OwnerWorkspaceRecord, &'a str, u64), String> {
     if let Some(primary) = &record.workspace {
         if primary.owner_id == permit.owner_id() {
-            return Ok((primary, &record.snapshot.persona_id, record.snapshot.persona_version));
+            return Ok((
+                primary,
+                &record.snapshot.persona_id,
+                record.snapshot.persona_version,
+            ));
         }
     }
     let owned = record
@@ -480,16 +478,22 @@ fn admit_visitor_in_record(
 ) -> Result<VisitorPermit, String> {
     if let Some(primary) = &record.workspace {
         if let Ok(permit) = admit_from_workspace(
-            primary, bearer_token, &record.snapshot.persona_id,
-            record.snapshot.persona_version, now_millis,
+            primary,
+            bearer_token,
+            &record.snapshot.persona_id,
+            record.snapshot.persona_version,
+            now_millis,
         ) {
             return Ok(permit);
         }
     }
     for additional in record.additional_owner_personas.values() {
         if let Ok(permit) = admit_from_workspace(
-            &additional.workspace, bearer_token, &additional.snapshot.persona_id,
-            additional.snapshot.persona_version, now_millis,
+            &additional.workspace,
+            bearer_token,
+            &additional.snapshot.persona_id,
+            additional.snapshot.persona_version,
+            now_millis,
         ) {
             return Ok(permit);
         }
