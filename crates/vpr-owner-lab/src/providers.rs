@@ -4,6 +4,7 @@ mod avatar_factory;
 mod avatar_selection;
 mod llm_wire;
 mod provider_state;
+mod owner_explicit;
 mod tts_factory;
 use avatar_factory::build_selected_avatar;
 #[cfg(any(windows, test))]
@@ -11,7 +12,8 @@ use avatar_selection::avatar_provider_config_complete_with;
 use avatar_selection::select_environment_avatar_provider_with;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
-use tts_factory::{build_tts, build_tts_explicit, build_tts_fallback, ensure_avatar_pcm_compatible};
+use tts_factory::{build_tts, build_tts_fallback, ensure_avatar_pcm_compatible};
+use owner_explicit::{provider_value, ProviderSource};
 
 use crate::provider_credentials::ProviderCredentialProfile;
 #[cfg(windows)]
@@ -25,13 +27,6 @@ use vpr_provider_openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleLlm
 use vpr_provider_openai_transcription::{OpenAiTranscriptionConfig, OpenAiTranscriptionStt};
 
 const PROVIDER_CREDENTIAL_SOURCE_ENV: &str = "VPR_PROVIDER_CREDENTIAL_SOURCE";
-
-#[derive(Clone, Copy)]
-enum ProviderSource {
-    EnvironmentFirst,
-    ExplicitOnly,
-}
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderDescriptor {
@@ -86,51 +81,6 @@ impl ProviderBundle {
     ) -> Result<Self, String> {
         let allow_secure_store = credential_source_allows_secure_store()?;
         Self::from_env_with_secure_store_and_avatar(require_voice, allow_secure_store, Some(avatar))
-    }
-
-    /// Build the existing canonical adapters using only one explicitly selected
-    /// owner's credential profile. STT/LLM/TTS process environment and the
-    /// legacy Windows secure profile must never override that owner.
-    ///
-    /// The supplied avatar must already be selected for this owner.
-    ///
-    /// # Errors
-    /// Rejects invalid credentials, missing TTS, or incompatible private PCM.
-    pub fn from_explicit_owner_profile_with_avatar(
-        profile: &ProviderCredentialProfile,
-        avatar: Box<dyn RealtimeAvatarPort>,
-    ) -> Result<Self, String> {
-        profile.validate()?;
-        let (avatar, avatar_descriptor) = build_selected_avatar(Some(avatar), None)?;
-        let (stt, stt_descriptor) = build_stt(
-            &profile.stt_provider.to_ascii_lowercase(),
-            Some(profile),
-            ProviderSource::ExplicitOnly,
-        )?;
-        let (llm, llm_descriptor) = build_llm(
-            &profile.llm_provider.to_ascii_lowercase(),
-            Some(profile),
-            ProviderSource::ExplicitOnly,
-        )?;
-        let configured_tts = profile.tts.as_ref().ok_or("OWNER_TTS_NOT_CONFIGURED")?;
-        configured_tts.validate()?;
-        ensure_avatar_pcm_compatible(avatar.as_ref())?;
-        let (tts, tts_descriptor) = build_tts_explicit(configured_tts)?;
-        Ok(Self {
-            avatar,
-            stt: Some(stt),
-            llm: Some(llm),
-            tts: Some(tts),
-            tts_name: Some(configured_tts.provider.clone()),
-            tts_fallback: None,
-            tts_fallback_name: None,
-            avatar_descriptor,
-            stt_descriptor: Some(stt_descriptor),
-            llm_descriptor: Some(llm_descriptor),
-            tts_descriptor: Some(tts_descriptor),
-            tts_fallback_descriptor: None,
-            voice_profile: None,
-        })
     }
 
     fn from_env_with_secure_store(
@@ -624,20 +574,6 @@ fn resolved_value(name: &'static str, stored: Option<&str>) -> Option<String> {
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
     })
-}
-
-fn provider_value(
-    name: &'static str,
-    stored: Option<&str>,
-    source: ProviderSource,
-) -> Result<String, String> {
-    match source {
-        ProviderSource::EnvironmentFirst => required_value(name, stored),
-        ProviderSource::ExplicitOnly => stored
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_owned)
-            .ok_or_else(|| format!("owner provider setting {name} missing")),
-    }
 }
 
 fn required_value(name: &'static str, stored: Option<&str>) -> Result<String, String> {
