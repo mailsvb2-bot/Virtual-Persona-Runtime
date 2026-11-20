@@ -22,6 +22,15 @@ pub struct WorkspaceStatus {
     pub publication_status: Option<&'static str>,
 }
 
+/// Server-authenticated owner and exact reviewed Persona for one visitor.
+/// It is never populated from browser-supplied owner/persona identifiers.
+pub struct VisitorOwnerBinding {
+    pub owner_id: String,
+    pub persona_id: String,
+    pub persona_version: u64,
+    pub is_primary: bool,
+}
+
 /// All RT1 workspace operations hold the shared process mutex AND the OS
 /// sibling-file transaction fence across their complete read-modify-commit.
 /// This serializes canonical file writers without replacing the existing
@@ -89,6 +98,31 @@ impl Rt1WorkspaceService {
         let _transaction = persona_transaction::begin_workspace(self.transaction)?;
         let record = required_persona()?;
         snapshot_for_visitor_in_record(&record, bearer_token, server_now_millis()?)
+    }
+
+    /// Bind the exact visitor bearer to its owner and reviewed Persona before
+    /// choosing a credential profile or allocating a provider/worker session.
+    ///
+    /// # Errors
+    /// Rejects invalid or revoked visitor credentials and invalid canonical state.
+    pub fn owner_binding_for_visitor(
+        &self,
+        bearer_token: &str,
+    ) -> Result<VisitorOwnerBinding, String> {
+        crate::persona_store_lease::require_live_runtime_owner()?;
+        let _tx = persona_transaction::begin_workspace(self.transaction)?;
+        let record = required_persona()?;
+        let permit = admit_visitor_in_record(&record, bearer_token, server_now_millis()?)?;
+        let (_, persona_id, persona_version) = published_visitor_workspace(&record, &permit)?;
+        Ok(VisitorOwnerBinding {
+            owner_id: permit.owner_id().to_owned(),
+            persona_id: persona_id.to_owned(),
+            persona_version,
+            is_primary: record
+                .workspace
+                .as_ref()
+                .is_some_and(|primary| primary.owner_id == permit.owner_id()),
+        })
     }
 
     /// Reject a secondary tenant before any shared provider credentials are used.
