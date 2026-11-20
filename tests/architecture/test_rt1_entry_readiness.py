@@ -18,6 +18,10 @@ class EntryReadinessTests(unittest.TestCase):
         result = module.status()
         self.assertEqual(result["schema"], "rt1-entry-readiness-0.1")
         self.assertTrue(result["owner_functional_r0_accepted"])
+        self.assertTrue(result["rt0_functional_milestone_released"])
+        self.assertTrue(result["rt0_functional_development_closed"])
+        self.assertEqual(result["active_development_workstream"], "RT1")
+        self.assertIs(result["repeat_r0_functional_acceptance_required"], False)
         self.assertTrue(result["rt1_release_spec_consistent"])
         self.assertFalse(result["formal_rt0_exit_verified"])
         self.assertFalse(result["rt1_full_implementation_authorized"])
@@ -27,6 +31,10 @@ class EntryReadinessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as location:
             result = module.status(Path(location))
             self.assertFalse(result["owner_functional_r0_accepted"])
+            self.assertFalse(result["rt0_functional_milestone_released"])
+            self.assertFalse(result["rt0_functional_development_closed"])
+            self.assertEqual(result["active_development_workstream"], "UNDETERMINED")
+            self.assertIsNone(result["repeat_r0_functional_acceptance_required"])
             self.assertFalse(result["rt1_full_implementation_authorized"])
             self.assertFalse(result["rt1_release_spec_consistent"])
             self.assertEqual(result["allowed_now"], [])
@@ -73,6 +81,7 @@ class EntryReadinessTests(unittest.TestCase):
             )
             result = module.status(root)
             self.assertTrue(result["owner_functional_r0_accepted"])
+            self.assertFalse(result["rt0_functional_milestone_released"])
             self.assertFalse(result["rt1_full_implementation_authorized"])
 
 
