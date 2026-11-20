@@ -63,6 +63,33 @@ impl Rt1OwnerController {
         self.workspace.require_legacy_provider_owner(visitor_token)
     }
 
+    /// Return an exact canonical owner and private provider profile only
+    /// after authenticating the visitor against the active publication.
+    ///
+    /// # Errors
+    /// Denies revoked visitors, missing owner profiles and invalid credentials.
+    pub fn owner_provider_binding_for_visitor(
+        &self,
+        visitor_token: &str,
+    ) -> Result<(crate::VisitorOwnerBinding, Option<crate::OwnerProviderProfile>), String> {
+        let owner = self.workspace.owner_binding_for_visitor(visitor_token)?;
+        let scoped = crate::rt1_owner_provider_profile::profile_for_owner(&owner.owner_id)?;
+        Ok((owner, scoped))
+    }
+
+    /// Authenticate the owner before opening its private provider profile.
+    ///
+    /// # Errors
+    /// Denies invalid owner tokens or unavailable private profiles.
+    pub fn owner_provider_binding_for_owner(
+        &self,
+        owner_token: &str,
+    ) -> Result<(WorkspaceStatus, Option<crate::OwnerProviderProfile>), String> {
+        let owner = self.workspace.owner_status(owner_token)?;
+        let scoped = crate::rt1_owner_provider_profile::profile_for_owner(&owner.owner_id)?;
+        Ok((owner, scoped))
+    }
+
     /// Share the exact in-process visitor registry with the eventual runtime.
     /// All owner revoke and visitor admission calls must use this same instance.
     #[must_use]
