@@ -131,6 +131,11 @@ pub(super) fn visitor_start(
         return Err(error_response(403, "CONSENT_REQUIRED"));
     }
     let manager = admitted_visitor_manager(&body.visitor_token)?;
+    // Additional accounts cannot reuse the primary Owner Lab's credentials.
+    // Check before constructing adapters or allocating any remote media.
+    Rt1OwnerController::new()
+        .require_legacy_provider_owner(&body.visitor_token)
+        .map_err(|_| error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"))?;
     let (session_id, _reservation) = reserve_session_identity(state)?;
     let (providers, worker) = selected_provider_bundle(&session_id)?;
     let mut engine = super::super::engine_bootstrap::assemble(providers, true)
