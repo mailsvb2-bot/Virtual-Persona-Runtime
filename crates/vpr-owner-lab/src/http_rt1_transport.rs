@@ -96,10 +96,18 @@ mod public_release_route_tests {
     #[test]
     fn no_public_provider_route_can_bypass_qualification() {
         for action in [
-            "start", "answer", "ice", "text", "voice", "status",
-            "memory/connect", "memory/remember",
+            "start",
+            "answer",
+            "ice",
+            "text",
+            "voice",
+            "status",
+            "memory/connect",
+            "memory/remember",
         ] {
-            assert!(requires_release_qualification(&format!("/api/rt1/visitor/{action}")));
+            assert!(requires_release_qualification(&format!(
+                "/api/rt1/visitor/{action}"
+            )));
         }
         for path in [
             "/api/rt1/visitor/close",
