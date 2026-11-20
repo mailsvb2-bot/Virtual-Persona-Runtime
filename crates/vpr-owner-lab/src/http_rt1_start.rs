@@ -7,7 +7,7 @@ use super::{
     restore_reviewed_persona_for_visitor, startup_errors, verified_worker,
 };
 use std::sync::Arc;
-use vpr_owner_lab::{OwnerProviderProfile, VisitorOwnerBinding, profile_for_owner};
+use vpr_owner_lab::{OwnerProviderProfile, VisitorOwnerBinding};
 
 fn selected_provider_bundle(
     session_id: &str,
@@ -149,10 +149,8 @@ fn admitted_visitor_manager(
     manager
         .preflight_visitor(token)
         .map_err(|_| error_response(409, "RT1_VISITOR_ACCESS_DENIED"))?;
-    let owner = controller
-        .owner_binding_for_visitor(token)
-        .map_err(|_| error_response(409, "RT1_VISITOR_ACCESS_DENIED"))?;
-    let scoped = profile_for_owner(&owner.owner_id)
+    let (owner, scoped) = controller
+        .owner_provider_binding_for_visitor(token)
         .map_err(|_| error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"))?;
     if scoped.is_none() {
         controller
@@ -305,7 +303,8 @@ pub(super) fn validate_owner_publication(
     if owner.persona_version != expected_version {
         return Err(error_response(409, "RT1_STALE_PERSONA_VERSION"));
     }
-    let scoped = profile_for_owner(&owner.owner_id)
+    let (_, scoped) = controller
+        .owner_provider_binding_for_owner(owner_token)
         .map_err(|_| error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"))?;
     if scoped.is_none() {
         let primary = controller
