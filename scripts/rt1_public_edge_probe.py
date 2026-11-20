@@ -80,10 +80,16 @@ def run(origin: str, timeout: float = 7.0) -> dict:
         NoRedirect(),
     )
     results = []
+    csrf_token: str | None = None
     for probe in PROBES:
         headers = {"Accept": "application/json, text/html, application/javascript"}
         if probe.method == "POST":
             headers["Content-Type"] = "application/json"
+            # Use the real read-only visitor bootstrap token: an incorrectly
+            # exposed backend must not appear protected merely because the
+            # test omitted CSRF and triggered a backend 403.
+            if csrf_token:
+                headers["X-VPR-CSRF"] = csrf_token
         if probe.origin == "same":
             headers["Origin"] = origin
         elif probe.origin:
@@ -104,13 +110,31 @@ def run(origin: str, timeout: float = 7.0) -> dict:
         except Exception as error:
             results.append({"probe": probe.name, "pass": False, "error_class": type(error).__name__})
             continue
-        valid = 200 <= status < 300 if probe.allowed else 400 <= status < 500
+        valid = 200 <= status < 300 if probe.allowed else status in (403, 404)
+        if probe.name in {
+            "owner_root_denied", "owner_rt1_denied",
+            "owner_bootstrap_denied", "owner_publish_denied",
+        }:
+            # These locations are default-denied at Nginx with exact 404.
+            # A backend 400/403/409 here is evidence of a leaked route.
+            valid = status == 404
+        if probe.name in {
+            "visitor_post_without_origin_denied",
+            "visitor_post_cross_origin_denied",
+        }:
+            # Nginx's external Origin check returns 403 before proxying.
+            # A JSON backend CSRF or authorization rejection is NOT a pass.
+            valid = status == 403 and not body.lstrip().startswith(b"{")
+        if probe.name == "visitor_post_wrong_method_denied":
+            valid = status == 403
         if probe.name == "visitor_page":
             valid = valid and b'id="visitor-panel"' in body and len(body) <= 512 * 1024
         if probe.name == "visitor_bootstrap":
             try:
                 payload = json.loads(body)
                 valid = valid and set(payload) == {"csrf_token"} and isinstance(payload["csrf_token"], str)
+                if valid:
+                    csrf_token = payload["csrf_token"]
             except (ValueError, TypeError, KeyError):
                 valid = False
         if probe.name == "worklet":
