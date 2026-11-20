@@ -96,8 +96,7 @@ pub fn save_owner_provider_profile(
 ) -> Result<(), String> {
     validate_owner_id(owner_id)?;
     profile.validate(owner_id)?;
-    let raw = serde_json::to_string(profile)
-        .map_err(|_| "RT1_OWNER_PROVIDER_PROFILE_INVALID")?;
+    let raw = serde_json::to_string(profile).map_err(|_| "RT1_OWNER_PROVIDER_PROFILE_INVALID")?;
     windows_store(owner_id)
         .save(&raw)
         .map_err(|_| "RT1_OWNER_PROVIDER_SECURE_STORE_WRITE_FAILED".into())
@@ -124,8 +123,8 @@ fn load_windows_owner_profile(owner_id: &str) -> Result<Option<OwnerProviderProf
     let Some(raw) = raw else {
         return Ok(None);
     };
-    let profile: OwnerProviderProfile = serde_json::from_str(&raw)
-        .map_err(|_| "RT1_OWNER_PROVIDER_PROFILE_INVALID")?;
+    let profile: OwnerProviderProfile =
+        serde_json::from_str(&raw).map_err(|_| "RT1_OWNER_PROVIDER_PROFILE_INVALID")?;
     profile.validate(owner_id)?;
     Ok(Some(profile))
 }
@@ -287,8 +286,14 @@ mod windows_owner_tests {
     fn windows_owner_profiles_are_independent_and_legacy_store_is_unchanged() {
         let mut random = [0_u8; 32];
         getrandom::fill(&mut random).unwrap();
-        let a = random[..16].iter().map(|b| format!("{b:02x}")).collect::<String>();
-        let b = random[16..].iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let a = random[..16]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        let b = random[16..]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
         let make_profile = |owner_id: &str, key: &str| {
             let mut voice = ProviderCredentialProfile::local_rt0(
                 "https://avatar.example.test",
@@ -321,18 +326,27 @@ mod windows_owner_tests {
         save_owner_provider_profile(&b, &second).unwrap();
 
         assert_eq!(
-            load_windows_owner_profile(&a).unwrap().unwrap().worker_token,
+            load_windows_owner_profile(&a)
+                .unwrap()
+                .unwrap()
+                .worker_token,
             "worker-owner-a"
         );
         assert_eq!(
-            load_windows_owner_profile(&b).unwrap().unwrap().worker_token,
+            load_windows_owner_profile(&b)
+                .unwrap()
+                .unwrap()
+                .worker_token,
             "worker-owner-b"
         );
         assert!(save_owner_provider_profile(&a, &second).is_err());
         delete_owner_provider_profile(&a).unwrap();
         assert!(load_windows_owner_profile(&a).unwrap().is_none());
         assert_eq!(
-            load_windows_owner_profile(&b).unwrap().unwrap().worker_token,
+            load_windows_owner_profile(&b)
+                .unwrap()
+                .unwrap()
+                .worker_token,
             "worker-owner-b"
         );
         delete_owner_provider_profile(&b).unwrap();
