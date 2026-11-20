@@ -57,6 +57,11 @@ class PublicEdgeProbeTests(unittest.TestCase):
                         return Response(403, b'{"code":"CSRF_DENIED"}')
                     return Response(404, b"<html>Not Found</html>")
                 if path == "/api/rt1/visitor/status":
+                    header = dict(request.header_items())
+                    if header.get("Origin") == "https://persona.example.org":
+                        # The canonical backend denies this nonexistent
+                        # session, proving the visitor POST was forwarded.
+                        return Response(409, b'{"ok":false,"code":"RT1_VISITOR_REVOKED"}')
                     if self.leaked_origin:
                         return Response(403, b'{"code":"CSRF_DENIED"}')
                     return Response(403, b"<html>Forbidden</html>")
@@ -88,6 +93,10 @@ class PublicEdgeProbeTests(unittest.TestCase):
                             for p in probe.PROBES))
         for item in probe.PROBES:
             self.assertTrue(item.path.startswith("/"))
+        self.assertIn(
+            ("POST", "/api/rt1/visitor/status", "same"),
+            {(p.method, p.path, p.origin) for p in probe.PROBES},
+        )
         self.assertIn(
             ("POST", "/api/rt1/visitor/status", None),
             {(p.method, p.path, p.origin) for p in probe.PROBES},
