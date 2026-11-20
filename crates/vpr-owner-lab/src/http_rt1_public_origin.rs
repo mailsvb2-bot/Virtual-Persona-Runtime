@@ -18,7 +18,12 @@ pub(super) fn configured() -> Result<Option<String>, ()> {
 /// NOT sufficient to enable publication: a reviewed runtime gate must replace
 /// this deny before production. Local RT1 test publication remains unaffected.
 pub(super) fn publication_qualification() -> Result<(), &'static str> {
-    if configured().map_err(|()| "RT1_PUBLIC_ORIGIN_INVALID")?.is_none() {
+    let origin = configured().map_err(|()| "RT1_PUBLIC_ORIGIN_INVALID")?;
+    publication_qualification_for(origin.as_deref())
+}
+
+fn publication_qualification_for(origin: Option<&str>) -> Result<(), &'static str> {
+    if origin.is_none() {
         return Ok(());
     }
     // No rights/consent revision and budget reservation are currently bound
@@ -60,6 +65,16 @@ pub(super) fn verified(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod rt1_public_visitor_origin_tests {
     use super::verified;
+
+    #[test]
+    fn local_test_publication_remains_allowed_but_real_https_fails_closed() {
+        use super::publication_qualification_for;
+        assert_eq!(publication_qualification_for(None), Ok(()));
+        assert_eq!(
+            publication_qualification_for(Some("https://persona.example.org")),
+            Err("RT1_PUBLIC_RELEASE_QUALIFICATION_REQUIRED"),
+        );
+    }
 
     #[test]
     fn public_release_does_not_claim_completed_rights_or_budget() {
