@@ -11,6 +11,7 @@ fn drained_transports_stop_once_outside_registry_lock() {
     let callback_manager = Arc::clone(&manager);
     let callback_stops = Arc::clone(&stops);
     let session = Arc::new(ManagedVisitor {
+            owner_id: "owner".to_owned(),
         egress: Arc::new(VisitorEgressState::default()),
         authority: Rt1VisitorSession::inert_for_revocation_test(),
         revoked: AtomicBool::new(false),
@@ -48,6 +49,7 @@ fn publication_drain_revokes_runtime_permits_before_remote_stop() {
     manager.sessions.lock().insert(
         "egress".into(),
         Arc::new(ManagedVisitor {
+            owner_id: "owner".to_owned(),
             egress: Arc::new(VisitorEgressState::default()),
             authority: Rt1VisitorSession::inert_for_revocation_test(),
             revoked: AtomicBool::new(false),
@@ -101,6 +103,7 @@ fn revoke_does_not_wait_for_stalled_provider_worker() {
     manager.sessions.lock().insert(
         "stalled".into(),
         Arc::new(ManagedVisitor {
+            owner_id: "owner".to_owned(),
             egress: Arc::new(VisitorEgressState::default()),
             authority: Rt1VisitorSession::inert_for_revocation_test(),
             revoked: AtomicBool::new(false),
@@ -141,6 +144,7 @@ fn registry_drain_does_not_stop_sessions_added_after_drain() {
     let old_counter = Arc::clone(&old_stops);
     let new_counter = Arc::clone(&new_stops);
     let old_session = Arc::new(ManagedVisitor {
+            owner_id: "owner".to_owned(),
         egress: Arc::new(VisitorEgressState::default()),
         authority: Rt1VisitorSession::inert_for_revocation_test(),
         revoked: AtomicBool::new(false),
@@ -151,6 +155,7 @@ fn registry_drain_does_not_stop_sessions_added_after_drain() {
         }),
     });
     let new_session = Arc::new(ManagedVisitor {
+            owner_id: "owner".to_owned(),
         egress: Arc::new(VisitorEgressState::default()),
         authority: Rt1VisitorSession::inert_for_revocation_test(),
         revoked: AtomicBool::new(false),
@@ -187,6 +192,7 @@ fn unknown_visitor_never_stages_audio() {
 fn revoked_visitor_never_stages_audio() {
     let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
     let session = Arc::new(ManagedVisitor {
+            owner_id: "owner".to_owned(),
         egress: Arc::new(VisitorEgressState::default()),
         authority: Rt1VisitorSession::inert_for_revocation_test(),
         revoked: AtomicBool::new(true),
@@ -212,6 +218,7 @@ fn stale_provider_admission_revokes_existing_transport_exactly_once() {
     let stopped = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&stopped);
     let session = Arc::new(ManagedVisitor {
+            owner_id: "owner".to_owned(),
         egress: Arc::new(VisitorEgressState::default()),
         authority: Rt1VisitorSession::inert_for_revocation_test(),
         revoked: AtomicBool::new(false),
@@ -329,6 +336,7 @@ fn owner_revocation_dispatches_actual_remote_operation_cancel_http() {
     manager.sessions.lock().insert(
         "owner-session".into(),
         Arc::new(ManagedVisitor {
+            owner_id: "owner".to_owned(),
             egress: Arc::new(VisitorEgressState::default()),
             authority: Rt1VisitorSession::inert_for_revocation_test(),
             revoked: AtomicBool::new(false),
