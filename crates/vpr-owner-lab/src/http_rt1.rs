@@ -264,10 +264,25 @@ fn owner_status(request: &mut tiny_http::Request) -> Rt1HttpResult {
 
 fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
     let body: OwnerPublish = parse_json(request)?;
+    // Resolve account identity from the authenticated server-side credential,
+    // never from a caller-provided owner ID. The legacy Owner Lab engine is
+    // global, so it MUST NOT authorize a second owner's publication.
+    let owner = Rt1OwnerController::new()
+        .status(&body.owner_token)
+        .map_err(|_| error_response(403, "RT1_OWNER_ACTION_DENIED"))?;
+    if owner.persona_version != body.expected_persona_version {
+        return Err(error_response(409, "RT1_STALE_PERSONA_VERSION"));
+    }
     let readiness = || -> Result<(), String> {
         public_origin::publication_qualification().map_err(str::to_owned)?;
         let engine = state.engine.lock().map_err(|_| "RT1_ENGINE_UNAVAILABLE")?;
         let status = engine.status();
+        let binding = engine.reviewed_persona_binding();
+        if !binding.is_some_and(|(persona_id, version)| {
+            persona_id == owner.persona_id && version == owner.persona_version
+        }) {
+            return Err("RT1_OWNER_ENGINE_PERSONA_MISMATCH".into());
+        }
         // Provider construction is independent of the owner engine; never
         // hold its lock while validating publication dependencies.
         drop(engine);
