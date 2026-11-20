@@ -5,12 +5,14 @@
 //! and bind visitor turns to the server-retained visitor permit.
 use parking_lot::Mutex;
 use serde::Serialize;
-use vpr_policy::publication_lifecycle::{PublicationStatus, VisitorPermit};
+use vpr_policy::publication_lifecycle::VisitorPermit;
 
 use crate::persona_persistence::{PersistedPersonaV2, commit_current_record, load_current_record};
 use crate::persona_transaction::{self, CANONICAL_TRANSACTION};
 use crate::rt1_visitor_session_manager::{PendingVisitorRevocations, VisitorSessionManager};
 use crate::rt1_workspace::OwnerWorkspaceRecord;
+#[path = "rt1_workspace_accounts.rs"]
+mod accounts;
 
 #[derive(Serialize)]
 pub struct WorkspaceStatus {
@@ -82,27 +84,10 @@ impl Rt1WorkspaceService {
     /// # Errors
     /// Denies wrong credentials or missing reviewed Persona.
     pub fn owner_status(&self, owner_token: &str) -> Result<WorkspaceStatus, String> {
-        let _transaction = persona_transaction::begin_workspace(self.transaction)?;
-        let record = required_persona()?;
-        let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
-        if !workspace.authenticate_owner(owner_token) {
-            return Err("owner authorization denied".into());
-        }
-        let publication_status = workspace.status().map(|status| match status {
-            PublicationStatus::Private => "private",
-            PublicationStatus::Published => "published",
-            PublicationStatus::Paused => "paused",
-            PublicationStatus::Unpublished => "unpublished",
-        });
-        Ok(WorkspaceStatus {
-            owner_id: workspace.owner_id.clone(),
-            persona_id: record.snapshot.persona_id,
-            persona_version: record.snapshot.persona_version,
-            publication_status,
-        })
+        self.status_for_authenticated_owner(owner_token)
     }
 
-    /// Atomically bind a visitor token to the current reviewed Persona version.
+        /// Atomically bind a visitor token to the current reviewed Persona version.
     /// Readiness/cost/rights must be proved by the actual server, not supplied
     /// by a browser-provided boolean.
     ///
