@@ -286,8 +286,14 @@ mod windows_owner_tests {
     fn windows_owner_profiles_are_independent_and_legacy_store_is_unchanged() {
         let mut random = [0_u8; 32];
         getrandom::fill(&mut random).unwrap();
-        let a = format!("{:032x}", u128::from_be_bytes(random[..16].try_into().unwrap()));
-        let b = format!("{:032x}", u128::from_be_bytes(random[16..].try_into().unwrap()));
+        let a = format!(
+            "{:032x}",
+            u128::from_be_bytes(random[..16].try_into().unwrap())
+        );
+        let b = format!(
+            "{:032x}",
+            u128::from_be_bytes(random[16..].try_into().unwrap())
+        );
         let make_profile = |owner_id: &str, key: &str| {
             let mut voice = ProviderCredentialProfile::local_rt0(
                 "https://avatar.example.test",
