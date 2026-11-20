@@ -176,7 +176,7 @@
 
   async function api(path, data, signal) {
     if (!csrf) {
-      const boot = await fetch("/api/bootstrap", { cache: "no-store" });
+      const boot = await fetch(visitorOnly ? "/api/rt1/visitor/bootstrap" : "/api/bootstrap", { cache: "no-store" });
       if (!boot.ok) throw new Error("Не удалось получить защиту сессии.");
       const payload = await boot.json();
       csrf = payload.csrf_token;
