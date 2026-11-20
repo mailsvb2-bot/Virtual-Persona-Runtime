@@ -20,6 +20,7 @@ import time
 from rt1_musetalk_renderer import (
     CHUNK_FRAMES, PCM_WINDOW_SAMPLES, VIDEO_FPS,
     renderer_from_environment, prepared_avatar_digest, approved_model_digest,
+    validate_frame_batch,
 )
 
 
@@ -49,30 +50,6 @@ def evaluate_windows(latencies_ms: list[float], *, max_window_ms: float) -> dict
         "deadline_ms": max_window_ms,
     }
 
-
-def validate_frame_batch(frames, expected_shape=None):
-    """Validate the sender's actual 8-bit BGR video contract, without pixels in evidence.
-
-    This is a structural CUDA output check, NOT proof of lip-sync or face quality.
-    A later window may not silently change frame geometry or pixel encoding.
-    """
-    if len(frames) != CHUNK_FRAMES:
-        raise RuntimeError("real model did not produce ten BGR frames")
-    shape = expected_shape
-    for frame in frames:
-        frame_shape = getattr(frame, "shape", None)
-        if (getattr(frame, "ndim", None) != 3
-                or not isinstance(frame_shape, tuple)
-                or len(frame_shape) != 3
-                or frame_shape[2] != 3
-                or not all(isinstance(n, int) and n > 0 for n in frame_shape)
-                or str(getattr(frame, "dtype", "")) != "uint8"):
-            raise RuntimeError("MuseTalk CUDA output must be nonempty uint8 BGR")
-        if shape is None:
-            shape = frame_shape
-        elif frame_shape != shape:
-            raise RuntimeError("MuseTalk CUDA output frame dimensions changed")
-    return shape
 
 
 def main(argv=None) -> int:
