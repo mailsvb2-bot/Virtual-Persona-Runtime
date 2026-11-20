@@ -92,6 +92,10 @@ impl Rt1WorkspaceService {
     }
 
     /// Reject a secondary tenant before any shared provider credentials are used.
+    ///
+    /// # Errors
+    /// Rejects unauthorized or stale visitor tokens, secondary owners, or
+    /// an unavailable canonical Persona store.
     pub fn require_legacy_provider_owner(&self, bearer_token: &str) -> Result<(), String> {
         crate::persona_store_lease::require_live_runtime_owner()?;
         let _transaction = persona_transaction::begin_workspace(self.transaction)?;
