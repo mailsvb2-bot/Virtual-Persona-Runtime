@@ -664,6 +664,25 @@
     message("Воспроизведение звука разрешено.");
   }));
 
+  // Browsers may block muted/unmuted video autoplay even after SDP/RTP is
+  // connected. The ontrack message already tells the visitor to tap video;
+  // make that action real. It never allocates a new session or overrides STOP.
+  el("video").addEventListener("click", async () => {
+    const video = el("video");
+    if (!sessionId || stopping || pageHidden || !video.srcObject) return;
+    const id = sessionId;
+    try {
+      await video.play();
+      if (sessionId === id && !stopping && !pageHidden) {
+        message("Воспроизведение видео восстановлено.");
+      }
+    } catch (_) {
+      if (sessionId === id && !stopping && !pageHidden) {
+        message("Браузер не разрешил воспроизведение видео. Проверьте разрешения и повторите нажатие.", true);
+      }
+    }
+  });
+
   el("leave").addEventListener("click", () => busy(leave));
 
   function waitForIceGathering(connection, timeoutMs = 15000) {

@@ -102,6 +102,17 @@ test("separate owner and visitor contexts receive local aiortc RTP; revoke rejec
     expect(streams.videoTracks).toBeGreaterThan(0);
     expect(streams.audioTracks).toBeGreaterThan(0);
 
+    // Exercise a real visitor gesture on the actual Chromium RTP video element.
+    // This is the recovery route when browser autoplay was blocked; a paused
+    // remote video track must resume without new SDP, session, or worker CREATE.
+    await visitor.locator("#video").evaluate((video: HTMLVideoElement) => video.pause());
+    await expect.poll(() => visitor.locator("#video").evaluate((video: HTMLVideoElement) => video.paused))
+      .toBe(true);
+    await visitor.locator("#video").click();
+    await expect.poll(() => visitor.locator("#video").evaluate((video: HTMLVideoElement) => video.paused))
+      .toBe(false);
+    await expect(visitor.locator("#status")).toContainText("Воспроизведение видео восстановлено");
+
     // Require inbound RTP packets on BOTH tracks, not just negotiated SDP or a connected state.
     await expect.poll(async () => visitor.evaluate(async () => {
       const receivingPeer = (window as Window & { __rt1ReceivingPeer?: RTCPeerConnection }).__rt1ReceivingPeer;
