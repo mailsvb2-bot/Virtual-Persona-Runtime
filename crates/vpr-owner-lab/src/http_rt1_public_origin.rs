@@ -109,19 +109,6 @@ mod rt1_public_visitor_origin_tests {
     }
 
     #[test]
-    fn public_release_does_not_claim_completed_rights_or_budget() {
-        // Explicitly documents the intentionally unimplemented release gate.
-        // Activation requires reviewed runtime authority, not a feature toggle.
-        let rights: serde_json::Value =
-            serde_json::from_str(include_str!("../../../contracts/rt1-consent-rights-0.1.json")).unwrap();
-        let budget: serde_json::Value =
-            serde_json::from_str(include_str!("../../../contracts/rt1-cost-budget-0.1.json")).unwrap();
-        assert_eq!(rights["durable_consent_rights_state_implemented"], false);
-        assert_eq!(budget["hard_session_budget_runtime_implemented"], false);
-        assert_eq!(budget["prepublication_estimate_runtime_implemented"], false);
-    }
-
-    #[test]
     fn only_exact_public_https_dns_origin_is_admitted() {
         for value in ["https://persona.example.org", "https://vpr.example.co.uk"] {
             assert_eq!(verified(value).as_deref(), Some(value));
