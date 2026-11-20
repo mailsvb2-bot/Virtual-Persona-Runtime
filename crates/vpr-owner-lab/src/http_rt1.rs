@@ -184,6 +184,9 @@ pub(super) fn route_post(
     request: &mut tiny_http::Request,
     state: &Arc<AppState>,
 ) -> Option<Rt1RoutedResponse> {
+    if let Some(reason) = public_origin::blocked_visitor_route(path) {
+        return Some(guarded_reply(Err(error_response(503, reason))));
+    }
     #[cfg(feature = "rt1-memory-postgres")]
     if let Some(response) = memory::route(path, request, state) {
         return Some(response);
