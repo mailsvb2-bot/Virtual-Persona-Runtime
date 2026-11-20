@@ -3,17 +3,17 @@ use std::env;
 mod avatar_factory;
 mod avatar_selection;
 mod llm_wire;
-mod provider_state;
 mod owner_explicit;
+mod provider_state;
 mod tts_factory;
 use avatar_factory::build_selected_avatar;
 #[cfg(any(windows, test))]
 use avatar_selection::avatar_provider_config_complete_with;
 use avatar_selection::select_environment_avatar_provider_with;
+use owner_explicit::{ProviderSource, provider_value};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use tts_factory::{build_tts, build_tts_fallback, ensure_avatar_pcm_compatible};
-use owner_explicit::{provider_value, ProviderSource};
 
 use crate::provider_credentials::ProviderCredentialProfile;
 #[cfg(windows)]
@@ -103,14 +103,12 @@ impl ProviderBundle {
         let (stt, llm, stt_descriptor, llm_descriptor) = match (stt_name, llm_name) {
             (None, None) if !require_voice => (None, None, None, None),
             (Some(stt_name), Some(llm_name)) => {
-                let (stt, stt_descriptor) =
-                    build_stt(
+                let (stt, stt_descriptor) = build_stt(
                     &stt_name,
                     matching_stt_profile(&stt_name, profile.as_ref()),
                     ProviderSource::EnvironmentFirst,
                 )?;
-                let (llm, llm_descriptor) =
-                    build_llm(
+                let (llm, llm_descriptor) = build_llm(
                     &llm_name,
                     matching_llm_profile(&llm_name, profile.as_ref()),
                     ProviderSource::EnvironmentFirst,
