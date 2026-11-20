@@ -250,26 +250,17 @@ fn owner_status(request: &mut tiny_http::Request) -> Rt1HttpResult {
     let status = Rt1OwnerController::new()
         .status(&body.owner_token)
         .map_err(|_| error_response(403, "RT1_OWNER_STATUS_DENIED"))?;
-    // The server, never the browser, selects the independently deployed
-    // visitor-only HTTPS entry. Keep the loopback lab default when unset.
+    // The server controls the public origin; it never trusts the browser.
     let public_origin = match std::env::var("VPR_RT1_PUBLIC_VISITOR_ORIGIN") {
-        Ok(raw) => Some(
-            public_origin::verified(&raw)
-                .ok_or_else(|| error_response(503, "RT1_PUBLIC_VISITOR_ORIGIN_INVALID"))?,
-        ),
+        Ok(raw) => Some(public_origin::verified(&raw)
+            .ok_or_else(|| error_response(503, "RT1_PUBLIC_VISITOR_ORIGIN_INVALID"))?),
         Err(std::env::VarError::NotPresent) => None,
         Err(_) => return Err(error_response(503, "RT1_PUBLIC_VISITOR_ORIGIN_INVALID")),
     };
-    Ok(json_response(
-        200,
-        &serde_json::json!({
-            "owner_id": status.owner_id,
-            "persona_id": status.persona_id,
-            "persona_version": status.persona_version,
-            "publication_status": status.publication_status,
-            "public_visitor_origin": public_origin
-        }),
-    ))
+    let mut snapshot = serde_json::to_value(status)
+        .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
+    snapshot["public_visitor_origin"] = serde_json::json!(public_origin);
+    Ok(json_response(200, &snapshot))
 }
 
 fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
