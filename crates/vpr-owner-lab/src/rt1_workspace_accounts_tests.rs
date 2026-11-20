@@ -42,7 +42,10 @@ fn three_owners() -> (PersistedPersonaV2, String, String, String) {
 #[test]
 fn authenticating_owner_b_never_returns_owner_a_or_c_persona() {
     let (mut record, a, b, c) = three_owners();
-    assert_eq!(status_for(&record, &a).unwrap().persona_id, "legacy-primary");
+    assert_eq!(
+        status_for(&record, &a).unwrap().persona_id,
+        "legacy-primary"
+    );
     assert_eq!(status_for(&record, &b).unwrap().persona_id, "persona-b");
     assert_eq!(status_for(&record, &c).unwrap().persona_id, "persona-c");
     assert!(status_for(&record, &"0".repeat(64)).is_err());
@@ -63,16 +66,25 @@ fn legacy_primary_commit_preserves_all_additional_workspaces() {
     let mut corrected_primary = reviewed("legacy-primary", 4);
     corrected_primary.claims[0].revisions[3].statement = "Owner A correction".into();
     let next = PersistedPersonaV2::reconciled(corrected_primary, Some(&raw)).unwrap();
-    assert_eq!(status_for(&next, &primary_token).unwrap().persona_version, 4);
+    assert_eq!(
+        status_for(&next, &primary_token).unwrap().persona_version,
+        4
+    );
     assert_eq!(status_for(&next, &b_token).unwrap().persona_version, 3);
     assert_eq!(status_for(&next, &c_token).unwrap().persona_version, 3);
-    assert_eq!(next.additional_owner_personas, old.additional_owner_personas);
+    assert_eq!(
+        next.additional_owner_personas,
+        old.additional_owner_personas
+    );
 }
 
 #[test]
 fn concurrent_owner_b_and_c_corrections_do_not_clobber_each_other() {
     let (record, primary_token, b_token, c_token) = three_owners();
-    let suffix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     let path = std::env::temp_dir().join(format!(
         "vpr-rt1-canonical-tenants-{}-{suffix}.json",
         std::process::id()
@@ -81,7 +93,10 @@ fn concurrent_owner_b_and_c_corrections_do_not_clobber_each_other() {
     crate::persona_file_io::commit_raw(&path, &initial).unwrap();
 
     let mut workers = Vec::new();
-    for (owner_token, persona_id) in [(b_token.clone(), "persona-b"), (c_token.clone(), "persona-c")] {
+    for (owner_token, persona_id) in [
+        (b_token.clone(), "persona-b"),
+        (c_token.clone(), "persona-c"),
+    ] {
         let path = path.clone();
         workers.push(std::thread::spawn(move || {
             let _tx = persona_transaction::begin_for_path(&path).unwrap();
@@ -98,9 +113,20 @@ fn concurrent_owner_b_and_c_corrections_do_not_clobber_each_other() {
     let raw = crate::persona_file_io::read_raw(&path).unwrap().unwrap();
     let final_record: PersistedPersonaV2 = serde_json::from_str(&raw).unwrap();
     final_record.clone().validate().unwrap();
-    assert_eq!(status_for(&final_record, &primary_token).unwrap().persona_version, 3);
-    assert_eq!(status_for(&final_record, &b_token).unwrap().persona_version, 4);
-    assert_eq!(status_for(&final_record, &c_token).unwrap().persona_version, 4);
+    assert_eq!(
+        status_for(&final_record, &primary_token)
+            .unwrap()
+            .persona_version,
+        3
+    );
+    assert_eq!(
+        status_for(&final_record, &b_token).unwrap().persona_version,
+        4
+    );
+    assert_eq!(
+        status_for(&final_record, &c_token).unwrap().persona_version,
+        4
+    );
     std::fs::remove_file(&path).unwrap();
     let mut lock_name = path.into_os_string();
     lock_name.push(".transaction.lock");
@@ -111,6 +137,8 @@ fn concurrent_owner_b_and_c_corrections_do_not_clobber_each_other() {
 fn swapped_owner_map_key_is_rejected_before_disk_commit() {
     let (mut record, _, _, _) = three_owners();
     let (key, data) = record.additional_owner_personas.pop_first().unwrap();
-    record.additional_owner_personas.insert(format!("untrusted-{key}"), data);
+    record
+        .additional_owner_personas
+        .insert(format!("untrusted-{key}"), data);
     assert!(record.validate().is_err());
 }
