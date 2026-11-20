@@ -106,3 +106,48 @@ test("RT1 refuses a public visitor invite when only diagnostic video transport i
   });
   await expect(page.locator("#invite-token")).toHaveValue("");
 });
+
+
+test("RT1 owner invite uses the authenticated public HTTPS origin and visitor bootstrap hides owner metadata", async ({ page }) => {
+  await page.goto("/rt1", { waitUntil: "domcontentloaded" });
+  const minimalBootstrap = await page.request.get("/api/rt1/visitor/bootstrap");
+  expect(minimalBootstrap.status()).toBe(200);
+  const bootstrap = await minimalBootstrap.json();
+  expect(Object.keys(bootstrap).sort()).toEqual(["csrf_token"]);
+  expect(typeof bootstrap.csrf_token).toBe("string");
+
+  const bearer = "q".repeat(64);
+  let published = false;
+  await page.route("**/api/rt1/owner/status", (route) =>
+    route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({
+        owner_id: "owner-1",
+        persona_id: "reviewed-persona",
+        persona_version: 2,
+        publication_status: published ? "published" : "private",
+        public_visitor_origin: "https://visitor.example.org",
+      }),
+    }));
+  await page.route("**/api/rt1/owner/publish", (route) => {
+    published = true;
+    return route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ visitor_token: bearer }),
+    });
+  });
+
+  await page.locator("#owner-token").fill("test-owner-credential");
+  await page.locator("#owner-refresh").click();
+  await expect(page.locator("#publish")).toBeEnabled();
+  await page.locator("#publish").click();
+  await expect(page.locator("#invite-link")).toHaveValue(
+    "https://visitor.example.org/rt1/visit#invite=" + bearer,
+  );
+  // The URL's path contains no bearer; the browser consumes the fragment
+  // before any fetch, so a public gateway never logs it in request paths.
+  const link = await page.locator("#invite-link").inputValue();
+  expect(new URL(link).pathname).toBe("/rt1/visit");
+  expect(new URL(link).search).toBe("");
+  expect(new URL(link).hash).toBe("#invite=" + bearer);
+});
