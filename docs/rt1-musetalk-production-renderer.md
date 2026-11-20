@@ -341,8 +341,11 @@ is **only a compute acceptance**; browser RTP synchronization, real visitor
 conversation, interruption and verified two-track STOP remain separately
 required. Never copy this JSON into a production-publication certificate.
 
-The real CUDA run now validates all generated windows as **uniform,
-non-empty uint8 BGR frames** (not merely three-channel tensors). Its
+The canonical MuseTalk renderer now validates **every production inference window**
+using the same strict frame contract as GPU acceptance. A bad output fails the
+renderer instead of being forwarded to the live RTP sender. The real CUDA
+acceptance run validates all generated windows as **uniform, non-empty uint8
+BGR frames** (not merely three-channel tensors). Its
 non-sensitive JSON evidence records frame count, width, height, pixel format,
 measured peak allocated CUDA memory and total GPU memory. Those metrics help
 size a temporary GPU trial; they **do not** prove facial quality, real
