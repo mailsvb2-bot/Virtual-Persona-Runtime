@@ -143,7 +143,8 @@ fn visitor_start_grant(
                 "signal": bundle,
                 "voice_enabled": voice_enabled,
                 // Worker/diagnostic SDP already contains ICE candidates.
-                "diagnostic_rtp": verified_worker::selected() || std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
+                "diagnostic_rtp": verified_worker::selected()
+                    || std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
             }),
         ),
         conversation,
