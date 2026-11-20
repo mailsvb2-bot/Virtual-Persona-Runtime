@@ -262,10 +262,13 @@ fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
     let body: OwnerPublish = parse_json(request)?;
     public_origin::publication_qualification()
         .map_err(startup_errors::publication_error_response)?;
-    let owner =
-        start::validate_legacy_owner_publication(&body.owner_token, body.expected_persona_version)?;
+    let (owner, scoped) =
+        start::validate_owner_publication(&body.owner_token, body.expected_persona_version)?;
     let readiness = || -> Result<(), String> {
         public_origin::publication_qualification().map_err(str::to_owned)?;
+        if let Some(scoped) = scoped.as_ref() {
+            return start::publication_scoped_owner_ready(&owner, scoped);
+        }
         let engine = state.engine.lock().map_err(|_| "RT1_ENGINE_UNAVAILABLE")?;
         let status = engine.status();
         let binding = engine.reviewed_persona_binding();
