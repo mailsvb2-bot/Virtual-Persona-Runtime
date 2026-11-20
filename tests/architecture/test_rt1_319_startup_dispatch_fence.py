@@ -27,8 +27,8 @@ class Rt1StartupDispatchFenceTests(unittest.TestCase):
                         start.index("selected_provider_bundle(&session_id, &owner, scoped.as_ref())?"))
         self.assertLess(start.index("selected_provider_bundle(&session_id, &owner, scoped.as_ref())?"),
                         start.index("engine_bootstrap::assemble(providers, true)"))
-        self.assertIn("owner_binding_for_visitor(token)", http)
-        self.assertIn("profile_for_owner(&owner.owner_id)", http)
+        self.assertIn("owner_provider_binding_for_visitor(token)", http)
+        self.assertIn("owner_provider_binding_for_owner(owner_token)", http)
         self.assertIn("register_visitor(", start)
         self.assertLess(start.index("register_visitor("), start.index("conversation.supports_private_voice()"))
         self.assertIn("finalize_registered_stop(", start)
