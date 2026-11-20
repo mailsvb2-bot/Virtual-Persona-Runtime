@@ -248,7 +248,57 @@ fn owner_status(request: &mut tiny_http::Request) -> Rt1HttpResult {
     let status = Rt1OwnerController::new()
         .status(&body.owner_token)
         .map_err(|_| error_response(403, "RT1_OWNER_STATUS_DENIED"))?;
-    Ok(json_response(200, &status))
+    // The server, never the browser, selects the independently deployed
+    // visitor-only HTTPS entry. Keep the loopback lab default when unset.
+    let public_origin = match std::env::var("VPR_RT1_PUBLIC_VISITOR_ORIGIN") {
+        Ok(raw) => Some(
+            verified_public_visitor_origin(&raw)
+                .ok_or_else(|| error_response(503, "RT1_PUBLIC_VISITOR_ORIGIN_INVALID"))?,
+        ),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => return Err(error_response(503, "RT1_PUBLIC_VISITOR_ORIGIN_INVALID")),
+    };
+    Ok(json_response(
+        200,
+        &serde_json::json!({
+            "owner_id": status.owner_id,
+            "persona_id": status.persona_id,
+            "persona_version": status.persona_version,
+            "publication_status": status.publication_status,
+            "public_visitor_origin": public_origin
+        }),
+    ))
+}
+
+/// Only an explicit HTTPS DNS origin is eligible for cross-device invites.
+/// No URL path, credentials, query, fragment, port, private IP or hostname
+/// tricks may redirect visitor bearer credentials off the approved origin.
+fn verified_public_visitor_origin(raw: &str) -> Option<String> {
+    let host = raw.strip_prefix("https://")?;
+    if host.len() > 253 || !host.contains('.') || host.ends_with('.') {
+        return None;
+    }
+    if host.bytes().any(|b| !(b.is_ascii_alphanumeric() || b == b'-' || b == b'.')) {
+        return None;
+    }
+    if host.split('.').any(|label| {
+        label.is_empty()
+            || label.len() > 63
+            || label.starts_with('-')
+            || label.ends_with('-')
+    }) {
+        return None;
+    }
+    let tld = host.rsplit('.').next()?;
+    if !tld.bytes().all(|b| b.is_ascii_alphabetic()) || tld.len() < 2 {
+        return None;
+    }
+    if matches!(tld, "local" | "localhost" | "invalid" | "test" | "example") {
+        return None;
+    }
+    // Do not accept URL-like aliases or silently normalize a different
+    // authority. DNS may vary by deployment; TLS and server_name are external.
+    Some(raw.to_owned())
 }
 
 fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
@@ -579,6 +629,35 @@ fn visitor_close(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
             "remote_video_stop_confirmed": remote_stop_confirmed,
         }),
     ))
+}
+
+#[cfg(test)]
+mod rt1_public_visitor_origin_tests {
+    use super::verified_public_visitor_origin;
+
+    #[test]
+    fn only_exact_public_https_dns_origin_is_admitted() {
+        for value in ["https://persona.example.org", "https://vpr.example.co.uk"] {
+            assert_eq!(verified_public_visitor_origin(value).as_deref(), Some(value));
+        }
+        for value in [
+            "", "http://persona.example.org", "https://localhost",
+            "https://127.0.0.1", "https://persona.local",
+            "https://persona.example.invalid", "https://persona.example.test",
+            "https://persona.example.org:443",
+            "https://persona.example.org/", "https://persona.example.org/rt1/visit",
+            "https://persona.example.org?next=other",
+            "https://persona.example.org#invite=secret",
+            "https://me@persona.example.org", "https://persona.example.org@evil.tld",
+            "https://persona.example.org.evil.tld/path",
+            "https://-persona.example.org", "https://persona..org",
+            "https://persona.example.org\\",
+            "https://persona.example.org\nX-Foo: injected",
+            "HTTPS://persona.example.org",
+        ] {
+            assert!(verified_public_visitor_origin(value).is_none(), "{value:?}");
+        }
+    }
 }
 
 #[cfg(test)]
