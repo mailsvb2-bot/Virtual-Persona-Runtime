@@ -60,7 +60,7 @@ pub(crate) struct PersistedPersonaV2 {
 }
 
 impl PersistedPersonaV2 {
-    fn new(snapshot: DurableReviewedOwnerContextSnapshot) -> Self {
+    pub(crate) fn new(snapshot: DurableReviewedOwnerContextSnapshot) -> Self {
         Self {
             schema_version: STORE_SCHEMA_V2.into(),
             snapshot,
@@ -108,7 +108,7 @@ impl PersistedPersonaV2 {
         Ok(next)
     }
 
-    fn validate(self) -> Result<DurableReviewedOwnerContextSnapshot, String> {
+    pub(crate) fn validate(self) -> Result<DurableReviewedOwnerContextSnapshot, String> {
         if self.schema_version != STORE_SCHEMA_V2 {
             return Err("reviewed Persona store schema is unsupported".into());
         }
