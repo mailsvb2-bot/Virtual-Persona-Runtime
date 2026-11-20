@@ -44,6 +44,9 @@ impl Rt1OwnerController {
     }
 
     /// The legacy provider stack is not yet tenant-scoped.
+    ///
+    /// # Errors
+    /// Rejects unknown, revoked, or non-primary visitor publication authority.
     pub fn require_legacy_provider_owner(&self, visitor_token: &str) -> Result<(), String> {
         self.workspace.require_legacy_provider_owner(visitor_token)
     }
