@@ -15,6 +15,8 @@ use super::{AppState, HttpResponse, error_response, json_response, parse_json};
 #[cfg(feature = "rt1-memory-postgres")]
 #[path = "http_rt1_memory.rs"]
 mod memory;
+#[path = "http_rt1_public_origin.rs"]
+mod public_origin;
 #[path = "http_rt1_transport.rs"]
 mod transport;
 
@@ -248,7 +250,13 @@ fn owner_status(request: &mut tiny_http::Request) -> Rt1HttpResult {
     let status = Rt1OwnerController::new()
         .status(&body.owner_token)
         .map_err(|_| error_response(403, "RT1_OWNER_STATUS_DENIED"))?;
-    Ok(json_response(200, &status))
+    // The server controls the public origin; it never trusts the browser.
+    let public_origin = public_origin::configured()
+        .map_err(|()| error_response(503, "RT1_PUBLIC_VISITOR_ORIGIN_INVALID"))?;
+    let mut snapshot =
+        serde_json::to_value(status).map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
+    snapshot["public_visitor_origin"] = serde_json::json!(public_origin);
+    Ok(json_response(200, &snapshot))
 }
 
 fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {

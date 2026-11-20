@@ -189,6 +189,12 @@ fn route_request(
 ) -> HttpResponse {
     match (method, path) {
         (&Method::Get, "/api/bootstrap") => bootstrap_response(state),
+        // Visitor public edge must never receive Owner Lab bootstrap metadata
+        // (voice configuration, owner state, capture/evidence hints). The
+        // existing CSRF and canonical visitor authority remain unchanged.
+        (&Method::Get, "/api/rt1/visitor/bootstrap") if http_rt1::enabled() => {
+            json_response(200, &serde_json::json!({"csrf_token": state.csrf_token}))
+        }
         (&Method::Get, "/api/tts/providers") => http_tts::snapshot(state),
         (&Method::Get, "/api/status") => with_engine(state, |engine| {
             let mut status = serde_json::to_value(engine.status()).unwrap_or_default();

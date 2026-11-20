@@ -1,0 +1,82 @@
+# Install ONLY after an approved HTTPS origin and TLS certificate exist.
+# Replace the two literal __RT1_VISITOR_FQDN__ / certificate placeholders and
+# the backend port if not 8787. Do not publish the loopback Owner Lab itself.
+# Owner UI stays private; this edge exposes ONLY an invite-scoped visitor flow.
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name __RT1_VISITOR_FQDN__;
+    ssl_certificate __RT1_TLS_FULLCHAIN_PATH__;
+    ssl_certificate_key __RT1_TLS_PRIVATE_KEY_PATH__;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    server_tokens off;
+    client_max_body_size 4m;
+
+    # No Host alias, default vhost, redirect or alternate authority may
+    # transparently inherit visitor access to the Persona backend.
+    if ($host != "__RT1_VISITOR_FQDN__") { return 444; }
+
+    add_header Cache-Control "no-store" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+
+    # The loopback upstream's existing Host/Origin+CSRF and verified visitor
+    # session checks remain authoritative. Never trust a client-supplied
+    # forwarding header or expose an owner API through this edge.
+    proxy_http_version 1.1;
+    proxy_set_header Host "127.0.0.1:8787";
+    proxy_set_header Origin "http://127.0.0.1:8787";
+    proxy_set_header Connection "close";
+    proxy_set_header X-Forwarded-For "";
+    proxy_set_header X-Forwarded-Host "";
+    proxy_set_header X-Forwarded-Proto "";
+    proxy_set_header Forwarded "";
+    proxy_connect_timeout 3s;
+    # Match the canonical 90-second response deadline with margin, including
+    # slow LLM + TTS calls and bounded voice uploads.
+    proxy_send_timeout 95s;
+    proxy_read_timeout 95s;
+
+    # A public visitor only needs this HTML and its pinned scripts/styles.
+    location = /rt1/visit {
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:8787;
+    }
+    location = /rt1.js {
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:8787;
+    }
+    location = /rt1.css {
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:8787;
+    }
+    location = /vendor/livekit-client.umd.js {
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:8787;
+    }
+    # Required by the existing browser microphone capture path.
+    location = /mic-worklet.js {
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:8787;
+    }
+    # The visitor bootstrap contains only the CSRF value, not owner status,
+    # voice configuration, evidence metadata or private Persona state.
+    location = /api/rt1/visitor/bootstrap {
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:8787;
+    }
+
+    # Only the canonical authenticated visitor handlers can create or
+    # continue a session; every POST checks the externally observed Origin
+    # before it is normalized for the private loopback upstream.
+    location ~ ^/api/rt1/visitor/(start|answer|ice|text|voice|interrupt|status|close)$ {
+        limit_except POST { deny all; }
+        if ($http_origin != "https://__RT1_VISITOR_FQDN__") { return 403; }
+        proxy_pass http://127.0.0.1:8787;
+    }
+
+    # Deny /rt1 (owner), /api/bootstrap, owner/capture/admin/evidence, every
+    # other route, and prefix/path variants by default.
+    location / { return 404; }
+}

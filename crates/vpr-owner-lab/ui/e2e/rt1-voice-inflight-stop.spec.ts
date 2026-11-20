@@ -385,7 +385,7 @@ test("RT1 local owner invitation reaches separate visitor screen without leaking
   expect(link).not.toContain("local-owner-key");
 
   const visitor = await context.newPage();
-  await visitor.route("**/api/bootstrap", route =>
+  await visitor.route("**/api/rt1/visitor/bootstrap", route =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ csrf_token: "test" }) }));
   await visitor.route("**/api/rt1/visitor/start", route => {
     starts += 1;

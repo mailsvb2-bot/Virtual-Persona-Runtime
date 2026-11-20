@@ -23,8 +23,8 @@
     el("owner-panel").hidden = true;
     el("rt1-heading").textContent = "Persona · Посетитель";
     el("rt1-description").textContent =
-      "Локальная проверка разговора с Persona. Код приглашения ограничен правами и сроком публикации; согласие требуется отдельно.";
-    document.title = "Persona — посетитель RT1 (локально)";
+      "Разговор с Persona доступен по действующему приглашению. Согласие на аудио- и видеосессию требуется отдельно.";
+    document.title = "Persona — посетитель RT1";
   }
   importVisitorInvite();
   // Memory is an explicit staging feature. Never display unusable controls
@@ -32,11 +32,18 @@
   el("memory-panel").hidden = true;
   el("memory-admin-refresh").hidden = true;
 
-  function localInviteLink(token) {
+  function visitorInviteLink(token) {
     if (!/^[a-zA-Z0-9_-]{32,256}$/.test(token)) {
       throw new Error("Сервер вернул некорректный код приглашения.");
     }
-    const address = new URL("/rt1/visit", window.location.origin);
+    const configured = ownerSnapshot?.public_visitor_origin;
+    // The public origin comes ONLY from the authenticated owner/status API.
+    // Never accept a URL provided by the invite or visitor's query string.
+    const origin = configured || window.location.origin;
+    const address = new URL("/rt1/visit", origin);
+    if (configured && (address.protocol !== "https:" || address.origin !== configured)) {
+      throw new Error("Неверный публичный адрес посетителя.");
+    }
     address.hash = "invite=" + encodeURIComponent(token);
     return address.href;
   }
@@ -110,7 +117,10 @@
       if (epoch !== ownerStatusEpoch || el("owner-token").value.trim() !== token) return;
       if (!Number.isSafeInteger(snapshot.persona_version) || snapshot.persona_version < 1 ||
           typeof snapshot.persona_id !== "string" ||
-          ![null, "private", "published", "paused", "unpublished"].includes(snapshot.publication_status)) {
+          ![null, "private", "published", "paused", "unpublished"].includes(snapshot.publication_status) ||
+          (snapshot.public_visitor_origin != null &&
+            (typeof snapshot.public_visitor_origin !== "string" ||
+             !/^https:\/\/[a-zA-Z0-9.-]+$/.test(snapshot.public_visitor_origin)))) {
         throw new Error("Сервер вернул некорректный статус Persona.");
       }
       ownerSnapshot = snapshot;
@@ -166,7 +176,7 @@
 
   async function api(path, data, signal) {
     if (!csrf) {
-      const boot = await fetch("/api/bootstrap", { cache: "no-store" });
+      const boot = await fetch(visitorOnly ? "/api/rt1/visitor/bootstrap" : "/api/bootstrap", { cache: "no-store" });
       if (!boot.ok) throw new Error("Не удалось получить защиту сессии.");
       const payload = await boot.json();
       csrf = payload.csrf_token;
@@ -256,7 +266,7 @@
     // displayed workspace. Never expose its visitor bearer after a switch
     // (including switching away and then back to the same owner token).
     if (epoch !== ownerStatusEpoch || el("owner-token").value.trim() !== token) return;
-    const visitorLink = localInviteLink(result.visitor_token);
+    const visitorLink = visitorInviteLink(result.visitor_token);
     el("invite-token").value = result.visitor_token;
     el("invite-link").value = visitorLink;
     el("copy-invite").disabled = false;
@@ -273,7 +283,9 @@
         ownerSnapshot.publication_status !== "published") return;
     try {
       await navigator.clipboard.writeText(link);
-      message("Локальная ссылка скопирована. На другом устройстве localhost недоступен.");
+      message(ownerSnapshot?.public_visitor_origin
+        ? "Публичная ссылка скопирована. Доступ посетителя зависит от активной публикации."
+        : "Локальная ссылка скопирована. На другом устройстве localhost недоступен.");
     } catch (_) {
       el("invite-link").focus();
       el("invite-link").select();
