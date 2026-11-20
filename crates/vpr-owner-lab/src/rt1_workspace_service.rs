@@ -87,7 +87,7 @@ impl Rt1WorkspaceService {
         self.status_for_authenticated_owner(owner_token)
     }
 
-        /// Atomically bind a visitor token to the current reviewed Persona version.
+    /// Atomically bind a visitor token to the current reviewed Persona version.
     /// Readiness/cost/rights must be proved by the actual server, not supplied
     /// by a browser-provided boolean.
     ///
