@@ -232,3 +232,85 @@ fn yandex_and_proxyapi_use_one_canonical_openai_compatible_llm_port() {
     );
     assert_eq!(openai_compatible_provider_name("unknown"), None);
 }
+
+#[test]
+fn explicit_owner_bundle_uses_separate_provider_instances_and_owner_avatar_identity() {
+    use crate::StoredTtsCredential;
+    use std::sync::Arc;
+    use vpr_integration::RealtimeAvatarPort;
+    use vpr_provider_did_agent_streams::{
+        DidAgentStreamsAvatar, DidAgentStreamsConfig, EchoPythonBackend, EchoPythonConfig,
+    };
+
+    fn pcm_avatar() -> Box<dyn RealtimeAvatarPort> {
+        let avatar = DidAgentStreamsAvatar::new(DidAgentStreamsConfig::new(
+            "https://api.d-id.com",
+            "local-avatar-key",
+            "owner-avatar-agent",
+        ))
+        .unwrap();
+        Box::new(avatar.with_echo_backend(Arc::new(EchoPythonBackend::new(
+            EchoPythonConfig::pcm_only("python".to_owned()).unwrap(),
+        ))))
+    }
+
+    let mut a = profile();
+    a.set_tts(StoredTtsCredential {
+        provider: "openai-speech".into(),
+        endpoint: "https://api.openai.com/v1/audio/speech".into(),
+        api_key: "tts-owner-a".into(),
+        model: "tts-1".into(),
+        voice: "alloy".into(),
+    })
+    .unwrap();
+    let mut b = a.clone();
+    b.stt_model = "nova-2".into();
+    b.llm_model = "deepseek-chat".into();
+    b.tts.as_mut().unwrap().voice = "nova".into();
+    b.validate().unwrap();
+
+    let owner_a = "a".repeat(32);
+    let owner_b = "b".repeat(32);
+    let a_bundle = super::ProviderBundle::from_explicit_owner_profile_with_avatar(
+        &owner_a, &a, pcm_avatar(),
+    )
+    .unwrap();
+    let b_bundle = super::ProviderBundle::from_explicit_owner_profile_with_avatar(
+        &owner_b, &b, pcm_avatar(),
+    )
+    .unwrap();
+    assert_ne!(
+        a_bundle.avatar_descriptor.configuration_fingerprint_sha256,
+        b_bundle.avatar_descriptor.configuration_fingerprint_sha256
+    );
+    assert_ne!(
+        a_bundle.stt_descriptor.unwrap().configuration_fingerprint_sha256,
+        b_bundle.stt_descriptor.unwrap().configuration_fingerprint_sha256
+    );
+    assert_ne!(
+        a_bundle.llm_descriptor.unwrap().configuration_fingerprint_sha256,
+        b_bundle.llm_descriptor.unwrap().configuration_fingerprint_sha256
+    );
+    assert_ne!(
+        a_bundle.tts_descriptor.unwrap().configuration_fingerprint_sha256,
+        b_bundle.tts_descriptor.unwrap().configuration_fingerprint_sha256
+    );
+    assert!(
+        super::ProviderBundle::from_explicit_owner_profile_with_avatar(
+            "not-an-owner",
+            &a,
+            pcm_avatar(),
+        )
+        .is_err()
+    );
+    let mut missing_tts = a.clone();
+    missing_tts.tts = None;
+    assert!(
+        super::ProviderBundle::from_explicit_owner_profile_with_avatar(
+            &owner_a,
+            &missing_tts,
+            pcm_avatar(),
+        )
+        .is_err()
+    );
+}
