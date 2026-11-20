@@ -43,12 +43,57 @@ impl Rt1OwnerController {
         self.workspace.current_persona_identity()
     }
 
+    /// Identify the exact owner and reviewed Persona from a server-issued
+    /// visitor bearer, before selecting any external provider credentials.
+    ///
+    /// # Errors
+    /// Rejects invalid, stale or revoked visitor authority.
+    pub fn owner_binding_for_visitor(
+        &self,
+        bearer_token: &str,
+    ) -> Result<crate::VisitorOwnerBinding, String> {
+        self.workspace.owner_binding_for_visitor(bearer_token)
+    }
+
     /// The legacy provider stack is not yet tenant-scoped.
     ///
     /// # Errors
     /// Rejects unknown, revoked, or non-primary visitor publication authority.
     pub fn require_legacy_provider_owner(&self, visitor_token: &str) -> Result<(), String> {
         self.workspace.require_legacy_provider_owner(visitor_token)
+    }
+
+    /// Return an exact canonical owner and private provider profile only
+    /// after authenticating the visitor against the active publication.
+    ///
+    /// # Errors
+    /// Denies revoked visitors, missing owner profiles and invalid credentials.
+    pub fn owner_provider_binding_for_visitor(
+        &self,
+        visitor_token: &str,
+    ) -> Result<
+        (
+            crate::VisitorOwnerBinding,
+            Option<crate::OwnerProviderProfile>,
+        ),
+        String,
+    > {
+        let owner = self.workspace.owner_binding_for_visitor(visitor_token)?;
+        let scoped = crate::rt1_owner_provider_profile::profile_for_owner(&owner.owner_id)?;
+        Ok((owner, scoped))
+    }
+
+    /// Authenticate the owner before opening its private provider profile.
+    ///
+    /// # Errors
+    /// Denies invalid owner tokens or unavailable private profiles.
+    pub fn owner_provider_binding_for_owner(
+        &self,
+        owner_token: &str,
+    ) -> Result<(WorkspaceStatus, Option<crate::OwnerProviderProfile>), String> {
+        let owner = self.workspace.owner_status(owner_token)?;
+        let scoped = crate::rt1_owner_provider_profile::profile_for_owner(&owner.owner_id)?;
+        Ok((owner, scoped))
     }
 
     /// Share the exact in-process visitor registry with the eventual runtime.

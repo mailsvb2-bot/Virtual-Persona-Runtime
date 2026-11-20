@@ -55,13 +55,15 @@ class Rt1BrowserActions(unittest.TestCase):
         body = start[begin:end]
         authority = body.index("admitted_visitor_manager(&body.visitor_token)")
         reservation = body.index("reserve_session_identity(state)")
-        provider = body.index("selected_provider_bundle(&session_id)")
+        provider = body.index("selected_provider_bundle(&session_id, &owner, scoped.as_ref())")
         engine = body.index("engine_bootstrap::assemble(providers, true)")
         self.assertLess(authority, reservation)
         self.assertLess(reservation, provider)
         self.assertLess(provider, engine)
         self.assertIn("self.workspace.admit_visitor_turn(", manager)
         self.assertIn(".preflight_visitor(token)", start[:begin])
+        self.assertIn("owner_provider_binding_for_visitor(token)", start[:begin])
+        self.assertIn("owner_provider_binding_for_visitor(token)", start[:begin])
         # Never remove the authoritative second admission or egress fence.
         self.assertIn("manager.open_with_fast_revoke(", (
             ROOT / "crates/vpr-owner-lab/src/rt1_visitor_conversation.rs"

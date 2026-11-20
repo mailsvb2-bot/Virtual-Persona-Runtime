@@ -22,6 +22,15 @@ pub struct WorkspaceStatus {
     pub publication_status: Option<&'static str>,
 }
 
+/// Server-authenticated owner and exact reviewed Persona for one visitor.
+/// It is never populated from browser-supplied owner/persona identifiers.
+pub struct VisitorOwnerBinding {
+    pub owner_id: String,
+    pub persona_id: String,
+    pub persona_version: u64,
+    pub is_primary: bool,
+}
+
 /// All RT1 workspace operations hold the shared process mutex AND the OS
 /// sibling-file transaction fence across their complete read-modify-commit.
 /// This serializes canonical file writers without replacing the existing
