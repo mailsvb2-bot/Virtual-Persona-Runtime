@@ -7,9 +7,7 @@ use super::{
     restore_reviewed_persona_for_visitor, startup_errors, verified_worker,
 };
 use std::sync::Arc;
-use vpr_owner_lab::{
-    OwnerProviderProfile, VisitorOwnerBinding, profile_for_owner,
-};
+use vpr_owner_lab::{OwnerProviderProfile, VisitorOwnerBinding, profile_for_owner};
 
 fn selected_provider_bundle(
     session_id: &str,
@@ -349,5 +347,7 @@ pub(super) fn publication_scoped_owner_ready(
     if providers.tts.is_none() {
         return Err("RT1_TTS_NOT_CONFIGURED".into());
     }
-    remote.publication_ready().map_err(|_| "RT1_OWNER_WORKER_NOT_READY".into())
+    remote
+        .publication_ready()
+        .map_err(|_| "RT1_OWNER_WORKER_NOT_READY".into())
 }
