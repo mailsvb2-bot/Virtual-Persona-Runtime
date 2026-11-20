@@ -316,54 +316,88 @@ fn visitor_token_selects_only_its_reviewed_owner_persona() {
             claims: vec![DurableReviewedOwnerClaimSnapshot {
                 claim_id: "identity".into(),
                 history_complete: true,
-                revisions: (1..=2).map(|revision| DurableOwnerClaimRevisionSnapshot {
-                    revision,
-                    statement: format!("Revision {revision}"),
-                    kind: "preference".into(),
-                    source: "owner".into(),
-                    verification: if revision == 1 {
-                        "unverified".into()
-                    } else {
-                        "owner_verified".into()
-                    },
-                    derivation: "direct".into(),
-                }).collect(),
+                revisions: (1..=2)
+                    .map(|revision| DurableOwnerClaimRevisionSnapshot {
+                        revision,
+                        statement: format!("Revision {revision}"),
+                        kind: "preference".into(),
+                        source: "owner".into(),
+                        verification: if revision == 1 {
+                            "unverified".into()
+                        } else {
+                            "owner_verified".into()
+                        },
+                        derivation: "direct".into(),
+                    })
+                    .collect(),
             }],
         }
     }
 
     let mut record = PersistedPersonaV2::new(reviewed("persona-a"));
     let (mut primary, primary_owner_token) = OwnerWorkspaceRecord::provision().unwrap();
-    let primary_visitor = primary.publish(&primary_owner_token, "persona-a", 2, true).unwrap();
+    let primary_visitor = primary
+        .publish(&primary_owner_token, "persona-a", 2, true)
+        .unwrap();
     record.workspace = Some(primary);
 
     let (mut secondary, secondary_owner_token) = OwnerWorkspaceRecord::provision().unwrap();
-    let secondary_visitor = secondary.publish(&secondary_owner_token, "persona-b", 2, true).unwrap();
+    let secondary_visitor = secondary
+        .publish(&secondary_owner_token, "persona-b", 2, true)
+        .unwrap();
     record.additional_owner_personas.insert(
         secondary.owner_id.clone(),
-        AdditionalOwnerPersona { snapshot: reviewed("persona-b"), workspace: secondary },
+        AdditionalOwnerPersona {
+            snapshot: reviewed("persona-b"),
+            workspace: secondary,
+        },
     );
     record.clone().validate().unwrap();
 
-    let select = |record: &PersistedPersonaV2, token: &str| {
-        snapshot_for_visitor_in_record(record, token, 1)
-    };
-    assert_eq!(select(&record, &primary_visitor).unwrap().persona_id, "persona-a");
-    assert_eq!(select(&record, &secondary_visitor).unwrap().persona_id, "persona-b");
+    let select =
+        |record: &PersistedPersonaV2, token: &str| snapshot_for_visitor_in_record(record, token, 1);
+    assert_eq!(
+        select(&record, &primary_visitor).unwrap().persona_id,
+        "persona-a"
+    );
+    assert_eq!(
+        select(&record, &secondary_visitor).unwrap().persona_id,
+        "persona-b"
+    );
     assert!(select(&record, &"0".repeat(64)).is_err());
     let a = admit_visitor_in_record(&record, &primary_visitor, 1).unwrap();
     let b = admit_visitor_in_record(&record, &secondary_visitor, 1).unwrap();
     assert_ne!(a.owner_id(), b.owner_id());
-    assert_eq!(published_visitor_workspace(&record, &a).unwrap().1, "persona-a");
-    assert_eq!(published_visitor_workspace(&record, &b).unwrap().1, "persona-b");
+    assert_eq!(
+        published_visitor_workspace(&record, &a).unwrap().1,
+        "persona-a"
+    );
+    assert_eq!(
+        published_visitor_workspace(&record, &b).unwrap().1,
+        "persona-b"
+    );
 
-    record.workspace.as_mut().unwrap().pause(&primary_owner_token).unwrap();
+    record
+        .workspace
+        .as_mut()
+        .unwrap()
+        .pause(&primary_owner_token)
+        .unwrap();
     assert!(select(&record, &primary_visitor).is_err());
     assert!(admit_visitor_in_record(&record, &primary_visitor, 1).is_err());
-    assert_eq!(select(&record, &secondary_visitor).unwrap().persona_id, "persona-b");
+    assert_eq!(
+        select(&record, &secondary_visitor).unwrap().persona_id,
+        "persona-b"
+    );
     assert!(admit_visitor_in_record(&record, &secondary_visitor, 1).is_ok());
 
-    record.additional_owner_personas.values_mut().next().unwrap()
-        .workspace.on_persona_correction(3).unwrap();
+    record
+        .additional_owner_personas
+        .values_mut()
+        .next()
+        .unwrap()
+        .workspace
+        .on_persona_correction(3)
+        .unwrap();
     assert!(select(&record, &secondary_visitor).is_err());
 }
