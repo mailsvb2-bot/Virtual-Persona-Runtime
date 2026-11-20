@@ -31,28 +31,6 @@ fn publication_qualification_for(origin: Option<&str>) -> Result<(), &'static st
     Err("RT1_PUBLIC_RELEASE_QUALIFICATION_REQUIRED")
 }
 
-/// Deny every chargeable/public visitor operation when an unqualified
-/// HTTPS edge is configured, including tokens minted before configuration.
-/// Keep STOP/close reachable to drain an already allocated sender.
-pub(super) fn blocked_visitor_route(path: &str) -> Option<&'static str> {
-    requires_release_qualification(path)
-        .then(publication_qualification)
-        .and_then(Result::err)
-}
-
-fn requires_release_qualification(path: &str) -> bool {
-    path.starts_with("/api/rt1/visitor/")
-        && !matches!(
-            path,
-            "/api/rt1/visitor/close"
-                | "/api/rt1/visitor/interrupt"
-                | "/api/rt1/visitor/memory/consent"
-                | "/api/rt1/visitor/memory/erase"
-                | "/api/rt1/visitor/memory/revoke"
-                | "/api/rt1/visitor/memory/rotate"
-        )
-}
-
 /// Only an explicit HTTPS DNS origin is eligible for cross-device invites.
 /// No URL path, credentials, query, fragment, port, private IP or hostname
 /// tricks may redirect visitor bearer credentials off the approved origin.
@@ -87,25 +65,6 @@ pub(super) fn verified(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod rt1_public_visitor_origin_tests {
     use super::verified;
-
-    #[test]
-    fn stop_and_close_remain_available_but_stale_token_routes_are_gated() {
-        use super::requires_release_qualification;
-        for action in ["start", "answer", "ice", "text", "voice", "status",
-                       "memory/connect", "memory/remember"] {
-            assert!(requires_release_qualification(&format!("/api/rt1/visitor/{action}")));
-        }
-        for path in [
-            "/api/rt1/visitor/close", "/api/rt1/visitor/interrupt",
-            "/api/rt1/visitor/memory/consent",
-            "/api/rt1/visitor/memory/erase",
-            "/api/rt1/visitor/memory/revoke",
-            "/api/rt1/visitor/memory/rotate",
-            "/api/rt1/owner/publish", "/api/rt1/owner/pause",
-        ] {
-            assert!(!requires_release_qualification(path));
-        }
-    }
 
     #[test]
     fn local_test_publication_remains_allowed_but_real_https_fails_closed() {
