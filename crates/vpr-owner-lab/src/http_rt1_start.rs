@@ -4,7 +4,7 @@ use super::{
     AppState, HttpResponse, ProviderBundle, RegistrationFailure, Rt1OwnerController,
     Rt1RemoteMediaRevocation, Rt1VisitorConversation, VisitorStart, error_response,
     finalize_registered_stop, json_response, new_visitor_session_id, parse_json, register_visitor,
-    restore_reviewed_persona, startup_errors, verified_worker,
+    restore_reviewed_persona_for_visitor, startup_errors, verified_worker,
 };
 use std::sync::Arc;
 
@@ -135,9 +135,8 @@ pub(super) fn visitor_start(
     let (providers, worker) = selected_provider_bundle(&session_id)?;
     let mut engine = super::super::engine_bootstrap::assemble(providers, true)
         .map_err(|_| error_response(503, "RT1_ENGINE_UNAVAILABLE"))?;
-    if !matches!(restore_reviewed_persona(&mut engine), Ok(true)) {
-        return Err(error_response(409, "RT1_PERSONA_NOT_REVIEWED"));
-    }
+    restore_reviewed_persona_for_visitor(&mut engine, &body.visitor_token)
+        .map_err(|_| error_response(409, "RT1_PERSONA_NOT_REVIEWED"))?;
     bind_optional_memory_on_start(&mut engine, body.memory_token.as_deref())?;
     let started = if let Some(worker) = worker {
         let retry_id = session_id.clone();
