@@ -12,6 +12,20 @@ pub(super) fn configured() -> Result<Option<String>, ()> {
     }
 }
 
+/// Production publication is forbidden while rights and cost control remain
+/// contract-only spikes. This check uses existing canonical contract maturity,
+/// not a browser claim or a new policy authority. Contract promotion alone is
+/// NOT sufficient to enable publication: a reviewed runtime gate must replace
+/// this deny before production. Local RT1 test publication remains unaffected.
+pub(super) fn publication_qualification() -> Result<(), &'static str> {
+    if configured().map_err(|()| "RT1_PUBLIC_ORIGIN_INVALID")?.is_none() {
+        return Ok(());
+    }
+    // No rights/consent revision and budget reservation are currently bound
+    // to public session admission. Deny before a shareable token is minted.
+    Err("RT1_PUBLIC_RELEASE_QUALIFICATION_REQUIRED")
+}
+
 /// Only an explicit HTTPS DNS origin is eligible for cross-device invites.
 /// No URL path, credentials, query, fragment, port, private IP or hostname
 /// tricks may redirect visitor bearer credentials off the approved origin.
@@ -46,6 +60,19 @@ pub(super) fn verified(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod rt1_public_visitor_origin_tests {
     use super::verified;
+
+    #[test]
+    fn public_release_does_not_claim_completed_rights_or_budget() {
+        // Explicitly documents the intentionally unimplemented release gate.
+        // Activation requires reviewed runtime authority, not a feature toggle.
+        let rights: serde_json::Value =
+            serde_json::from_str(include_str!("../../../contracts/rt1-consent-rights-0.1.json")).unwrap();
+        let budget: serde_json::Value =
+            serde_json::from_str(include_str!("../../../contracts/rt1-cost-budget-0.1.json")).unwrap();
+        assert_eq!(rights["durable_consent_rights_state_implemented"], false);
+        assert_eq!(budget["hard_session_budget_runtime_implemented"], false);
+        assert_eq!(budget["prepublication_estimate_runtime_implemented"], false);
+    }
 
     #[test]
     fn only_exact_public_https_dns_origin_is_admitted() {
