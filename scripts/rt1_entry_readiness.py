@@ -22,6 +22,14 @@ def status(root: Path = ROOT) -> dict:
     owner_text = owner_record.read_text(encoding="utf-8") if owner_record.is_file() else ""
     spec_text = rt1_spec.read_text(encoding="utf-8") if rt1_spec.is_file() else ""
     owner_accepted = "**Owner decision: R0 ACCEPTED / CLOSED for the agreed functional demonstration.**" in owner_text
+    milestone_record = root / "docs/releases/R0_FUNCTIONAL_MILESTONE_RELEASE.md"
+    milestone_text = milestone_record.read_text(encoding="utf-8") if milestone_record.is_file() else ""
+    functional_milestone_released = (
+        owner_accepted
+        and "**Decision:** `ACCEPTED_CLOSED`" in milestone_text
+        and "c393bae4cb369c82ef3f9160b9ba5fc6dc2d5774" in owner_text
+        and "c393bae4cb369c82ef3f9160b9ba5fc6dc2d5774" in milestone_text
+    )
     entry_blocked = (
         "**Status:** `BLOCKED_ON_RT0_EXIT`" in spec_text
         and "**Allowed pre-entry work:** `BOUNDED_FEASIBILITY_SPIKE_ONLY`" in spec_text
@@ -31,6 +39,12 @@ def status(root: Path = ROOT) -> dict:
     return {
         "schema": "rt1-entry-readiness-0.1",
         "owner_functional_r0_accepted": owner_accepted,
+        # A functional acceptance is a closed milestone, NOT an RT0 release
+        # qualification. Keep these independent for all downstream agents.
+        "rt0_functional_milestone_released": functional_milestone_released,
+        "rt0_functional_development_closed": functional_milestone_released,
+        "active_development_workstream": "RT1" if functional_milestone_released else "UNDETERMINED",
+        "repeat_r0_functional_acceptance_required": False if functional_milestone_released else None,
         "formal_rt0_exit_verified": False,
         "rt1_full_implementation_authorized": False,
         "allowed_now": ["BOUNDED_FEASIBILITY_SPIKE_ONLY"] if entry_blocked else [],
