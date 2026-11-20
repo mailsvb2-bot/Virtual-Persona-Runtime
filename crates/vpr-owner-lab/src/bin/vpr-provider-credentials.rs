@@ -20,11 +20,11 @@ use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvata
 #[path = "support/provider_credentials_echo.rs"]
 mod provider_credentials_echo;
 #[cfg(windows)]
-#[path = "support/provider_credentials_stt.rs"]
-mod provider_credentials_stt;
-#[cfg(windows)]
 #[path = "support/provider_credentials_owners.rs"]
 mod provider_credentials_owners;
+#[cfg(windows)]
+#[path = "support/provider_credentials_stt.rs"]
+mod provider_credentials_stt;
 #[cfg(windows)]
 use provider_credentials_echo::{DidProbePurpose, echo_preflight_denied};
 
