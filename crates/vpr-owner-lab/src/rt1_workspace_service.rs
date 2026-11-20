@@ -89,7 +89,22 @@ impl Rt1WorkspaceService {
         let _transaction = persona_transaction::begin_workspace(self.transaction)?;
         let record = required_persona()?;
         snapshot_for_visitor_in_record(&record, bearer_token, server_now_millis()?)
+    }
 
+    /// Reject a secondary tenant before any shared provider credentials are used.
+    pub fn require_legacy_provider_owner(&self, bearer_token: &str) -> Result<(), String> {
+        crate::persona_store_lease::require_live_runtime_owner()?;
+        let _transaction = persona_transaction::begin_workspace(self.transaction)?;
+        let record = required_persona()?;
+        let primary = record.workspace.as_ref().ok_or("primary owner missing")?;
+        admit_from_workspace(
+            primary,
+            bearer_token,
+            &record.snapshot.persona_id,
+            record.snapshot.persona_version,
+            server_now_millis()?,
+        )?;
+        Ok(())
     }
 
     /// Server-side owner identification by a secret that has never been stored
