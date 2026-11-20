@@ -39,7 +39,7 @@ impl Rt1VisitorSession {
         use vpr_policy::publication_lifecycle::CanonicalPublication;
         let mut publication =
             CanonicalPublication::new(owner_id, "persona", "publication", 1).unwrap();
-        publication.publish("owner", 1, true).unwrap();
+        publication.publish(owner_id, 1, true).unwrap();
         Self {
             workspace: Arc::new(Rt1WorkspaceService::new()),
             bearer_token: "not-an-admitted-visitor".into(),
