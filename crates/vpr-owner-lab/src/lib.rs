@@ -47,7 +47,7 @@ pub use rt1_remote_media_revocation::Rt1RemoteMediaRevocation;
 pub use rt1_visitor_conversation::{Rt1BrowserDeliveryGuard, Rt1VisitorConversation};
 pub use rt1_visitor_session::Rt1VisitorSession;
 pub use rt1_visitor_session_manager::VisitorSessionManager;
-pub use rt1_workspace_service::{Rt1WorkspaceService, WorkspaceStatus};
+pub use rt1_workspace_service::{Rt1WorkspaceService, VisitorOwnerBinding, WorkspaceStatus};
 
 pub use provider_credentials::{ProviderCredentialProfile, StoredTtsCredential};
 #[cfg(windows)]
