@@ -33,8 +33,10 @@ server {
     proxy_set_header X-Forwarded-Proto "";
     proxy_set_header Forwarded "";
     proxy_connect_timeout 3s;
-    proxy_send_timeout 35s;
-    proxy_read_timeout 35s;
+    # Match the canonical 90-second response deadline with margin, including
+    # slow LLM + TTS calls and bounded voice uploads.
+    proxy_send_timeout 95s;
+    proxy_read_timeout 95s;
 
     # A public visitor only needs this HTML and its pinned scripts/styles.
     location = /rt1/visit {
@@ -50,6 +52,11 @@ server {
         proxy_pass http://127.0.0.1:8787;
     }
     location = /vendor/livekit-client.umd.js {
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:8787;
+    }
+    # Required by the existing browser microphone capture path.
+    location = /mic-worklet.js {
         limit_except GET { deny all; }
         proxy_pass http://127.0.0.1:8787;
     }
