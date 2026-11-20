@@ -73,8 +73,8 @@ fn load_private_profile(
     use std::io::Read;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-    let dir_meta = fs::symlink_metadata(dir)
-        .map_err(|_| "RT1_OWNER_PROVIDER_DIRECTORY_UNAVAILABLE")?;
+    let dir_meta =
+        fs::symlink_metadata(dir).map_err(|_| "RT1_OWNER_PROVIDER_DIRECTORY_UNAVAILABLE")?;
     if !dir_meta.is_dir()
         || dir_meta.file_type().is_symlink()
         || dir_meta.permissions().mode() & 0o077 != 0
@@ -82,8 +82,8 @@ fn load_private_profile(
         return Err("RT1_OWNER_PROVIDER_DIRECTORY_INSECURE".into());
     }
     let file_path = dir.join(format!("{owner_id}.json"));
-    let initial = fs::symlink_metadata(&file_path)
-        .map_err(|_| "RT1_OWNER_PROVIDER_PROFILE_UNAVAILABLE")?;
+    let initial =
+        fs::symlink_metadata(&file_path).map_err(|_| "RT1_OWNER_PROVIDER_PROFILE_UNAVAILABLE")?;
     if !initial.is_file()
         || initial.file_type().is_symlink()
         || initial.permissions().mode() & 0o077 != 0
@@ -92,9 +92,9 @@ fn load_private_profile(
     {
         return Err("RT1_OWNER_PROVIDER_PROFILE_INSECURE".into());
     }
-    let file = File::open(&file_path)
-        .map_err(|_| "RT1_OWNER_PROVIDER_PROFILE_UNAVAILABLE")?;
-    let opened = file.metadata()
+    let file = File::open(&file_path).map_err(|_| "RT1_OWNER_PROVIDER_PROFILE_UNAVAILABLE")?;
+    let opened = file
+        .metadata()
         .map_err(|_| "RT1_OWNER_PROVIDER_PROFILE_UNAVAILABLE")?;
     if initial.dev() != opened.dev()
         || initial.ino() != opened.ino()
@@ -109,8 +109,8 @@ fn load_private_profile(
     if raw.len() > 32_768 {
         return Err("RT1_OWNER_PROVIDER_PROFILE_TOO_LARGE".into());
     }
-    let profile: OwnerProviderProfile = serde_json::from_str(&raw)
-        .map_err(|_| "RT1_OWNER_PROVIDER_PROFILE_INVALID")?;
+    let profile: OwnerProviderProfile =
+        serde_json::from_str(&raw).map_err(|_| "RT1_OWNER_PROVIDER_PROFILE_INVALID")?;
     profile.validate(owner_id)?;
     Ok(profile)
 }
@@ -119,14 +119,17 @@ fn load_private_profile(
 mod tests {
     use super::*;
     use std::fs;
-    use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::os::unix::fs::{PermissionsExt, symlink};
 
     #[test]
     fn private_owner_profiles_are_isolated_and_fail_closed() {
         let mut nonce = [0_u8; 8];
         getrandom::fill(&mut nonce).unwrap();
         let unique = u64::from_be_bytes(nonce);
-        let dir = env::temp_dir().join(format!("vpr-owner-provider-{}-{unique}", std::process::id()));
+        let dir = env::temp_dir().join(format!(
+            "vpr-owner-provider-{}-{unique}",
+            std::process::id()
+        ));
         fs::create_dir(&dir).unwrap();
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
 
@@ -138,20 +141,23 @@ mod tests {
             "stt-token".into(),
             "llm-token".into(),
         );
-        profile.set_tts(crate::StoredTtsCredential {
-            provider: "openai-speech".into(),
-            endpoint: "https://api.openai.com/v1/audio/speech".into(),
-            api_key: "tts-token".into(),
-            model: "tts-1".into(),
-            voice: "alloy".into(),
-        }).unwrap();
+        profile
+            .set_tts(crate::StoredTtsCredential {
+                provider: "openai-speech".into(),
+                endpoint: "https://api.openai.com/v1/audio/speech".into(),
+                api_key: "tts-token".into(),
+                model: "tts-1".into(),
+                voice: "alloy".into(),
+            })
+            .unwrap();
         let raw = serde_json::json!({
             "schema_version": PROFILE_SCHEMA,
             "owner_id": a,
             "profile": profile,
             "worker_endpoint": "https://worker.example.test",
             "worker_token": "worker-owner-a"
-        }).to_string();
+        })
+        .to_string();
         let path_a = dir.join(format!("{a}.json"));
         fs::write(&path_a, raw).unwrap();
         fs::set_permissions(&path_a, fs::Permissions::from_mode(0o600)).unwrap();
