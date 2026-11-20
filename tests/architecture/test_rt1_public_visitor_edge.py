@@ -55,7 +55,7 @@ class Rt1VisitorPublicEdgeTests(unittest.TestCase):
         browser = BROWSER.read_text(encoding="utf-8")
         self.assertIn('(&Method::Get, "/api/rt1/visitor/bootstrap") if http_rt1::enabled()', main)
         start = main.index('(&Method::Get, "/api/rt1/visitor/bootstrap")')
-        end = main.index("},", start)
+        end = main.index("\n        }", start)
         minimal = main[start:end]
         self.assertIn('"csrf_token": state.csrf_token', minimal)
         self.assertNotIn("bootstrap_response(state)", minimal)
