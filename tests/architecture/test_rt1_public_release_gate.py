@@ -32,15 +32,20 @@ class Rt1PublicReleaseGateTests(unittest.TestCase):
         # Reused visitor credentials from an older local publication must not
         # bypass the public gate after the operator configures an HTTPS edge.
         dispatch = http.split("pub(super) fn route_post(", 1)[1].split("type Rt1HttpResult", 1)[0]
-        self.assertIn("public_origin::blocked_visitor_route(path)", dispatch)
+        self.assertIn("transport::blocked_visitor_route(path)", dispatch)
         self.assertLess(
-            dispatch.index("public_origin::blocked_visitor_route(path)"),
+            dispatch.index("transport::blocked_visitor_route(path)"),
             dispatch.index('if path == "/api/rt1/visitor/start"'),
         )
-        self.assertIn('"/api/rt1/visitor/close"', helper)
-        self.assertIn('"/api/rt1/visitor/interrupt"', helper)
-        self.assertIn('"/api/rt1/visitor/memory/erase"', helper)
-        self.assertIn('"/api/rt1/visitor/memory/revoke"', helper)
+        transport = (SRC / "http_rt1_transport.rs").read_text(encoding="utf-8")
+        for route in (
+            "/api/rt1/visitor/close",
+            "/api/rt1/visitor/interrupt",
+            "/api/rt1/visitor/memory/erase",
+            "/api/rt1/visitor/memory/revoke",
+        ):
+            self.assertIn('"' + route + '"', transport)
+        self.assertIn("super::public_origin::publication_qualification", transport)
 
     def test_rights_and_budget_are_not_mislabeled_as_runtime(self):
         rights = json.loads((ROOT / "contracts/rt1-consent-rights-0.1.json").read_text())
