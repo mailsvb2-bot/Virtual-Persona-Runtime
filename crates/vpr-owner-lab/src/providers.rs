@@ -52,15 +52,27 @@ pub struct ProviderBundle {
 }
 
 impl ProviderBundle {
+    /// Builds the legacy Owner Lab provider stack with environment precedence.
+    ///
+    /// # Errors
+    /// Rejects incomplete or invalid provider configuration.
     pub fn from_env(require_voice: bool) -> Result<Self, String> {
         let allow_secure_store = credential_source_allows_secure_store()?;
         Self::from_env_with_secure_store(require_voice, allow_secure_store)
     }
 
+    /// Builds the legacy provider stack without the Windows secure store.
+    ///
+    /// # Errors
+    /// Rejects incomplete or invalid environment configuration.
     pub fn from_environment(require_voice: bool) -> Result<Self, String> {
         Self::from_env_with_secure_store(require_voice, false)
     }
 
+    /// Reuses the legacy voice providers with an explicitly selected avatar.
+    ///
+    /// # Errors
+    /// Rejects incompatible PCM and invalid provider configuration.
     pub fn from_env_with_avatar(
         require_voice: bool,
         avatar: Box<dyn RealtimeAvatarPort>,
