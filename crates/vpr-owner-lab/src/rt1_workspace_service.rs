@@ -336,11 +336,13 @@ impl Rt1WorkspaceService {
         let mut record = required_persona()?;
         let workspace = record.workspace.as_mut().ok_or("owner workspace missing")?;
         operation(workspace, owner_token)?;
+        let revoked_owner_id = workspace.owner_id.clone();
         // Never stop a transport for a mutation that failed to commit.
         commit_current_record(&record)?;
         // Hold the same transaction while draining: a concurrent republish
-        // cannot register its new-epoch visitors before this drain.
-        Ok(visitors.take_for_revocation())
+        // cannot register its new-epoch visitors before this drain. Never
+        // revoke sessions belonging to an unrelated owner/workspace.
+        Ok(visitors.take_for_revocation_for_owner(&revoked_owner_id))
     }
 
     fn change_publication(
