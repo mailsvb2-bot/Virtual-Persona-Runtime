@@ -20,6 +20,9 @@ use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvata
 #[path = "support/provider_credentials_echo.rs"]
 mod provider_credentials_echo;
 #[cfg(windows)]
+#[path = "support/provider_credentials_owners.rs"]
+mod provider_credentials_owners;
+#[cfg(windows)]
 #[path = "support/provider_credentials_stt.rs"]
 mod provider_credentials_stt;
 #[cfg(windows)]
@@ -59,8 +62,10 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         "probe-did" => probe_did(),
         "probe-avatar" => probe_avatar(),
         "clear" => provider_credentials_stt::clear(),
+        "set-rt1-owner" => provider_credentials_owners::set_rt1_owner(env::args().nth(2).as_deref()),
+        "clear-rt1-owner" => provider_credentials_owners::clear_rt1_owner(env::args().nth(2).as_deref()),
         _ => Err(
-            "usage: vpr-provider-credentials <set|set-did|set-tts|set-stt|set-llm|set-local-avatar|use-did-avatar|import-env|status|probe-did|probe-avatar|clear>"
+            "usage: vpr-provider-credentials <set|set-did|set-tts|set-stt|set-llm|set-local-avatar|use-did-avatar|import-env|status|probe-did|probe-avatar|clear|set-rt1-owner OWNER_ID|clear-rt1-owner OWNER_ID>"
                 .into(),
         ),
     }

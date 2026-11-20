@@ -1,15 +1,19 @@
 //! Operator-provisioned credentials for one canonical owner. Secrets are never
 //! persisted in the Persona envelope or returned from owner/visitor HTTP APIs.
 //! The legacy environment provider path is only permitted for the primary owner.
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::env;
 
 use crate::ProviderCredentialProfile;
 
 const PROFILE_DIR: &str = "VPR_RT1_OWNER_PROVIDER_DIR";
 const PROFILE_SCHEMA: &str = "vpr-rt1-owner-provider-profile-1";
+#[cfg(windows)]
+const WINDOWS_SERVICE: &str = "Virtual-Persona-Runtime";
+#[cfg(windows)]
+const WINDOWS_OWNER_PREFIX: &str = "rt1-owner-provider-v1";
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OwnerProviderProfile {
     schema_version: String,
@@ -20,6 +24,29 @@ pub struct OwnerProviderProfile {
 }
 
 impl OwnerProviderProfile {
+    /// Construct one owner-specific configuration with a reviewed canonical
+    /// owner ID. This object is operator-provisioned, never browser-generated.
+    ///
+    /// # Errors
+    /// Rejects invalid owner ID or incomplete/unsupported voice credentials.
+    pub fn new(
+        owner_id: &str,
+        profile: ProviderCredentialProfile,
+        worker_endpoint: String,
+        worker_token: String,
+    ) -> Result<Self, String> {
+        validate_owner_id(owner_id)?;
+        let configured = Self {
+            schema_version: PROFILE_SCHEMA.into(),
+            owner_id: owner_id.to_owned(),
+            profile,
+            worker_endpoint,
+            worker_token,
+        };
+        configured.validate(owner_id)?;
+        Ok(configured)
+    }
+
     /// Verify profile schema and exact owner binding on every platform.
     ///
     /// # Errors
@@ -40,6 +67,68 @@ impl OwnerProviderProfile {
     }
 }
 
+fn validate_owner_id(owner_id: &str) -> Result<(), String> {
+    if owner_id.len() != 32 || !owner_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("RT1_OWNER_PROVIDER_ID_INVALID".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_store(owner_id: &str) -> crate::windows_secure_store::ChunkedCredentialStore {
+    crate::windows_secure_store::ChunkedCredentialStore::for_owner(
+        WINDOWS_SERVICE,
+        format!("{WINDOWS_OWNER_PREFIX}-{owner_id}"),
+    )
+}
+
+/// Store an already validated owner-specific profile under its exact
+/// credential-manager namespace. Credentials never enter the Persona record.
+/// Use only from trusted operator setup, not public HTTP.
+///
+/// # Errors
+/// Rejects invalid owner identity, incorrect profile binding or a failed
+/// Windows Credential Manager write.
+#[cfg(windows)]
+pub fn save_owner_provider_profile(
+    owner_id: &str,
+    profile: &OwnerProviderProfile,
+) -> Result<(), String> {
+    validate_owner_id(owner_id)?;
+    profile.validate(owner_id)?;
+    let raw = serde_json::to_string(profile).map_err(|_| "RT1_OWNER_PROVIDER_PROFILE_INVALID")?;
+    windows_store(owner_id)
+        .save(&raw)
+        .map_err(|_| "RT1_OWNER_PROVIDER_SECURE_STORE_WRITE_FAILED".into())
+}
+
+/// Revoke a single owner's private credentials without touching other owners
+/// or the legacy RT0 credential profile.
+///
+/// # Errors
+/// Rejects invalid owner identity or an unavailable secure-store backend.
+#[cfg(windows)]
+pub fn delete_owner_provider_profile(owner_id: &str) -> Result<(), String> {
+    validate_owner_id(owner_id)?;
+    windows_store(owner_id)
+        .delete()
+        .map_err(|_| "RT1_OWNER_PROVIDER_SECURE_STORE_DELETE_FAILED".into())
+}
+
+#[cfg(windows)]
+fn load_windows_owner_profile(owner_id: &str) -> Result<Option<OwnerProviderProfile>, String> {
+    let raw = windows_store(owner_id)
+        .load()
+        .map_err(|_| "RT1_OWNER_PROVIDER_SECURE_STORE_READ_FAILED")?;
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let profile: OwnerProviderProfile =
+        serde_json::from_str(&raw).map_err(|_| "RT1_OWNER_PROVIDER_PROFILE_INVALID")?;
+    profile.validate(owner_id)?;
+    Ok(Some(profile))
+}
+
 /// Read the operator-owned profile for the canonical owner identity, never
 /// a browser-supplied file path. If a profile directory is configured,
 /// missing or unsafe per-owner records are fatal: there is no env fallback.
@@ -48,11 +137,16 @@ impl OwnerProviderProfile {
 /// Denies invalid owner IDs, insecure/missing credentials and unsupported
 /// operating systems. Does not return secret values in error strings.
 pub(crate) fn profile_for_owner(owner_id: &str) -> Result<Option<OwnerProviderProfile>, String> {
-    if owner_id.len() != 32 || !owner_id.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err("RT1_OWNER_PROVIDER_ID_INVALID".into());
-    }
+    validate_owner_id(owner_id)?;
     let Some(path) = env::var_os(PROFILE_DIR) else {
-        return Ok(None);
+        #[cfg(windows)]
+        {
+            return load_windows_owner_profile(owner_id);
+        }
+        #[cfg(not(windows))]
+        {
+            return Ok(None);
+        }
     };
     if path.is_empty() {
         return Err("RT1_OWNER_PROVIDER_DIRECTORY_INVALID".into());
@@ -181,5 +275,81 @@ mod tests {
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
         fs::remove_file(path_a).unwrap();
         fs::remove_dir(dir).unwrap();
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_owner_tests {
+    use super::*;
+
+    #[test]
+    fn windows_owner_profiles_are_independent_and_legacy_store_is_unchanged() {
+        let mut random = [0_u8; 32];
+        getrandom::fill(&mut random).unwrap();
+        let a = format!(
+            "{:032x}",
+            u128::from_be_bytes(random[..16].try_into().unwrap())
+        );
+        let b = format!(
+            "{:032x}",
+            u128::from_be_bytes(random[16..].try_into().unwrap())
+        );
+        let make_profile = |owner_id: &str, key: &str| {
+            let mut voice = ProviderCredentialProfile::local_rt0(
+                "https://avatar.example.test",
+                key,
+                format!("stt-{key}"),
+                format!("llm-{key}"),
+            );
+            voice
+                .set_tts(crate::StoredTtsCredential {
+                    provider: "openai-speech".into(),
+                    endpoint: "https://api.openai.com/v1/audio/speech".into(),
+                    api_key: format!("tts-{key}"),
+                    model: "tts-1".into(),
+                    voice: "alloy".into(),
+                })
+                .unwrap();
+            OwnerProviderProfile::new(
+                owner_id,
+                voice,
+                "https://worker.example.test".into(),
+                format!("worker-{key}"),
+            )
+            .unwrap()
+        };
+        let first = make_profile(&a, "owner-a");
+        let second = make_profile(&b, "owner-b");
+        let _ = delete_owner_provider_profile(&a);
+        let _ = delete_owner_provider_profile(&b);
+        save_owner_provider_profile(&a, &first).unwrap();
+        save_owner_provider_profile(&b, &second).unwrap();
+
+        assert_eq!(
+            load_windows_owner_profile(&a)
+                .unwrap()
+                .unwrap()
+                .worker_token,
+            "worker-owner-a"
+        );
+        assert_eq!(
+            load_windows_owner_profile(&b)
+                .unwrap()
+                .unwrap()
+                .worker_token,
+            "worker-owner-b"
+        );
+        assert!(save_owner_provider_profile(&a, &second).is_err());
+        delete_owner_provider_profile(&a).unwrap();
+        assert!(load_windows_owner_profile(&a).unwrap().is_none());
+        assert_eq!(
+            load_windows_owner_profile(&b)
+                .unwrap()
+                .unwrap()
+                .worker_token,
+            "worker-owner-b"
+        );
+        delete_owner_provider_profile(&b).unwrap();
+        assert!(load_windows_owner_profile(&b).unwrap().is_none());
     }
 }
