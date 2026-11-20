@@ -130,10 +130,9 @@ impl PersistedPersonaV2 {
             }
             ReviewedOwnerContext::from_durable_snapshot(&record.snapshot)
                 .map_err(|_| "additional reviewed Persona is invalid")?;
-            record.workspace.validate(
-                &record.snapshot.persona_id,
-                record.snapshot.persona_version,
-            )?;
+            record
+                .workspace
+                .validate(&record.snapshot.persona_id, record.snapshot.persona_version)?;
         }
         Ok(self.snapshot)
     }
