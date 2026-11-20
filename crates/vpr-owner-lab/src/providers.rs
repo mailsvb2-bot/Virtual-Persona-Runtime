@@ -52,29 +52,15 @@ pub struct ProviderBundle {
 }
 
 impl ProviderBundle {
-    /// Builds the Owner Lab provider composition with environment precedence.
-    ///
-    /// # Errors
-    /// Fails for invalid configuration.
     pub fn from_env(require_voice: bool) -> Result<Self, String> {
         let allow_secure_store = credential_source_allows_secure_store()?;
         Self::from_env_with_secure_store(require_voice, allow_secure_store)
     }
 
-    /// Builds providers from process environment only.
-    ///
-    /// # Errors
-    /// Fails for invalid configuration.
     pub fn from_environment(require_voice: bool) -> Result<Self, String> {
         Self::from_env_with_secure_store(require_voice, false)
     }
 
-    /// Build the same canonical STT/LLM/TTS bundle for a supplied verified
-    /// worker avatar. Validate PCM capability against the actual selected
-    /// avatar, never against a discarded D-ID/environment provider.
-    ///
-    /// # Errors
-    /// Rejects incomplete voice credentials or an unsupported avatar.
     pub fn from_env_with_avatar(
         require_voice: bool,
         avatar: Box<dyn RealtimeAvatarPort>,
@@ -186,9 +172,6 @@ impl ProviderBundle {
         })
     }
 }
-// Reuse the single provider selection path. A verified RT1 worker replaces
-// only the avatar port; STT/LLM/TTS composition and credential provenance
-// remain canonical.
 fn selected_tts_name(
     profile: Option<&ProviderCredentialProfile>,
     voice_profile: Option<&VoiceProfile>,
@@ -290,9 +273,6 @@ fn validate_strict_voice_selection(
     Ok(())
 }
 
-/// Binds exact nonsecret voice identity to the TTS configuration fingerprint.
-/// Any provider, model, speaker, status, rights digest or version change must
-/// invalidate all earlier RT0 evidence.
 fn bind_tts_descriptor(
     mut descriptor: ProviderDescriptor,
     profile: &VoiceProfile,
