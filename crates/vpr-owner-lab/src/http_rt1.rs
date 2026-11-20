@@ -262,6 +262,7 @@ fn owner_status(request: &mut tiny_http::Request) -> Rt1HttpResult {
 fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
     let body: OwnerPublish = parse_json(request)?;
     let readiness = || -> Result<(), String> {
+        public_origin::publication_qualification().map_err(str::to_owned)?;
         let engine = state.engine.lock().map_err(|_| "RT1_ENGINE_UNAVAILABLE")?;
         let status = engine.status();
         // Provider construction is independent of the owner engine; never
