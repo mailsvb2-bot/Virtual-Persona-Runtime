@@ -55,6 +55,13 @@ pub struct VisitorPermit {
 }
 
 impl VisitorPermit {
+    /// Return the owner identity proven by canonical publication admission.
+    /// Never derive it from a visitor-supplied field or a URL.
+    #[must_use]
+    pub fn owner_id(&self) -> &str {
+        &self.owner_id
+    }
+
     /// A visitor permit is valid only for the exact reviewed Persona revision.
     #[must_use]
     pub fn matches_persona(&self, persona_id: &str, persona_version: u64) -> bool {
