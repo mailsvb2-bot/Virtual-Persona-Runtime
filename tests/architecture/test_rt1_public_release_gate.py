@@ -37,7 +37,10 @@ class Rt1PublicReleaseGateTests(unittest.TestCase):
             dispatch.index("public_origin::blocked_visitor_route(path)"),
             dispatch.index('if path == "/api/rt1/visitor/start"'),
         )
-        self.assertIn('"/api/rt1/visitor/close" | "/api/rt1/visitor/interrupt"', helper)
+        self.assertIn('"/api/rt1/visitor/close"', helper)
+        self.assertIn('"/api/rt1/visitor/interrupt"', helper)
+        self.assertIn('"/api/rt1/visitor/memory/erase"', helper)
+        self.assertIn('"/api/rt1/visitor/memory/revoke"', helper)
 
     def test_rights_and_budget_are_not_mislabeled_as_runtime(self):
         rights = json.loads((ROOT / "contracts/rt1-consent-rights-0.1.json").read_text())
