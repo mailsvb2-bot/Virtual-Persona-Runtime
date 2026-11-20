@@ -244,3 +244,27 @@ pub(super) fn visitor_start(
         conversation,
     ))
 }
+
+pub(super) fn validate_legacy_owner_publication(
+    owner_token: &str,
+    expected_version: u64,
+) -> Result<vpr_owner_lab::WorkspaceStatus, HttpResponse> {
+    // Resolve the owner solely from the canonical credential; this global
+    // provider stack is not safe for an additional owner's Persona.
+    let controller = Rt1OwnerController::new();
+    let owner = controller
+        .status(owner_token)
+        .map_err(|_| error_response(403, "RT1_OWNER_ACTION_DENIED"))?;
+    if owner.persona_version != expected_version {
+        return Err(error_response(409, "RT1_STALE_PERSONA_VERSION"));
+    }
+    let primary = controller
+        .current_persona_identity()
+        .map_err(|_| error_response(503, "RT1_OWNER_ENGINE_UNAVAILABLE"))?;
+    if (owner.persona_id.as_str(), owner.persona_version)
+        != (primary.0.as_str(), primary.1)
+    {
+        return Err(error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"));
+    }
+    Ok(owner)
+}
