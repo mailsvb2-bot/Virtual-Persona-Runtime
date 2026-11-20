@@ -2,8 +2,7 @@
 //! and adapter factory as legacy Owner Lab, but without global credentials.
 use super::{
     ProviderBundle, ProviderCredentialProfile, RealtimeAvatarPort,
-    build_llm, build_selected_avatar, build_stt, ensure_avatar_pcm_compatible,
-    required_value,
+    build_llm, build_stt, descriptor, ensure_avatar_pcm_compatible, required_value,
 };
 use super::tts_factory::build_tts_explicit;
 
@@ -18,16 +17,27 @@ impl ProviderBundle {
     /// owner's credential profile. STT/LLM/TTS process environment and the
     /// legacy Windows secure profile must never override that owner.
     ///
-    /// The supplied avatar must already be selected for this owner.
+    /// The avatar must already be selected for the authenticated owner.
+    /// The owner ID must come from server-side canonical authority.
     ///
     /// # Errors
     /// Rejects invalid credentials, missing TTS, or incompatible private PCM.
     pub fn from_explicit_owner_profile_with_avatar(
+        owner_id: &str,
         profile: &ProviderCredentialProfile,
         avatar: Box<dyn RealtimeAvatarPort>,
     ) -> Result<Self, String> {
+        if owner_id.len() != 32 || !owner_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("INVALID_OWNER_PROVIDER_BINDING".into());
+        }
         profile.validate()?;
-        let (avatar, avatar_descriptor) = build_selected_avatar(Some(avatar), None)?;
+        let identity = avatar.descriptor();
+        let avatar_descriptor = descriptor(
+            "avatar",
+            &identity.provider,
+            &identity.model,
+            &[owner_id, identity.representation.as_deref().unwrap_or("")],
+        );
         let (stt, stt_descriptor) = build_stt(
             &profile.stt_provider.to_ascii_lowercase(),
             Some(profile),
@@ -58,8 +68,8 @@ impl ProviderBundle {
             voice_profile: None,
         })
     }
-
 }
+
 pub(super) fn provider_value(
     name: &'static str,
     stored: Option<&str>,
