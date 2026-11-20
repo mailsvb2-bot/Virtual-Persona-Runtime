@@ -71,7 +71,13 @@ impl Rt1OwnerController {
     pub fn owner_provider_binding_for_visitor(
         &self,
         visitor_token: &str,
-    ) -> Result<(crate::VisitorOwnerBinding, Option<crate::OwnerProviderProfile>), String> {
+    ) -> Result<
+        (
+            crate::VisitorOwnerBinding,
+            Option<crate::OwnerProviderProfile>,
+        ),
+        String,
+    > {
         let owner = self.workspace.owner_binding_for_visitor(visitor_token)?;
         let scoped = crate::rt1_owner_provider_profile::profile_for_owner(&owner.owner_id)?;
         Ok((owner, scoped))
