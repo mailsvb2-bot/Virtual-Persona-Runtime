@@ -119,6 +119,11 @@ fn admitted_visitor_manager(
     manager
         .preflight_visitor(token)
         .map_err(|_| error_response(409, "RT1_VISITOR_ACCESS_DENIED"))?;
+    // Never allocate any provider or remote media for a secondary owner
+    // while the legacy provider stack still has primary-only credentials.
+    Rt1OwnerController::new()
+        .require_legacy_provider_owner(token)
+        .map_err(|_| error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"))?;
     Ok(manager)
 }
 
@@ -131,11 +136,6 @@ pub(super) fn visitor_start(
         return Err(error_response(403, "CONSENT_REQUIRED"));
     }
     let manager = admitted_visitor_manager(&body.visitor_token)?;
-    // Additional accounts cannot reuse the primary Owner Lab's credentials.
-    // Check before constructing adapters or allocating any remote media.
-    Rt1OwnerController::new()
-        .require_legacy_provider_owner(&body.visitor_token)
-        .map_err(|_| error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"))?;
     let (session_id, _reservation) = reserve_session_identity(state)?;
     let (providers, worker) = selected_provider_bundle(&session_id)?;
     let mut engine = super::super::engine_bootstrap::assemble(providers, true)
