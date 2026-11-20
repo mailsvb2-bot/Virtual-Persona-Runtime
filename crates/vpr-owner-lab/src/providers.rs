@@ -11,7 +11,7 @@ use avatar_selection::avatar_provider_config_complete_with;
 use avatar_selection::select_environment_avatar_provider_with;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
-use tts_factory::{build_tts, build_tts_fallback, ensure_avatar_pcm_compatible};
+use tts_factory::{build_tts, build_tts_explicit, build_tts_fallback, ensure_avatar_pcm_compatible};
 
 use crate::provider_credentials::ProviderCredentialProfile;
 #[cfg(windows)]
@@ -25,6 +25,13 @@ use vpr_provider_openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleLlm
 use vpr_provider_openai_transcription::{OpenAiTranscriptionConfig, OpenAiTranscriptionStt};
 
 const PROVIDER_CREDENTIAL_SOURCE_ENV: &str = "VPR_PROVIDER_CREDENTIAL_SOURCE";
+
+#[derive(Clone, Copy)]
+enum ProviderSource {
+    EnvironmentFirst,
+    ExplicitOnly,
+}
+
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderDescriptor {
@@ -81,6 +88,51 @@ impl ProviderBundle {
         Self::from_env_with_secure_store_and_avatar(require_voice, allow_secure_store, Some(avatar))
     }
 
+    /// Build the existing canonical adapters using only one explicitly selected
+    /// owner's credential profile. STT/LLM/TTS process environment and the
+    /// legacy Windows secure profile must never override that owner.
+    ///
+    /// The supplied avatar must already be selected for this owner.
+    ///
+    /// # Errors
+    /// Rejects invalid credentials, missing TTS, or incompatible private PCM.
+    pub fn from_explicit_owner_profile_with_avatar(
+        profile: &ProviderCredentialProfile,
+        avatar: Box<dyn RealtimeAvatarPort>,
+    ) -> Result<Self, String> {
+        profile.validate()?;
+        let (avatar, avatar_descriptor) = build_selected_avatar(Some(avatar), None)?;
+        let (stt, stt_descriptor) = build_stt(
+            &profile.stt_provider.to_ascii_lowercase(),
+            Some(profile),
+            ProviderSource::ExplicitOnly,
+        )?;
+        let (llm, llm_descriptor) = build_llm(
+            &profile.llm_provider.to_ascii_lowercase(),
+            Some(profile),
+            ProviderSource::ExplicitOnly,
+        )?;
+        let configured_tts = profile.tts.as_ref().ok_or("OWNER_TTS_NOT_CONFIGURED")?;
+        configured_tts.validate()?;
+        ensure_avatar_pcm_compatible(avatar.as_ref())?;
+        let (tts, tts_descriptor) = build_tts_explicit(configured_tts)?;
+        Ok(Self {
+            avatar,
+            stt: Some(stt),
+            llm: Some(llm),
+            tts: Some(tts),
+            tts_name: Some(configured_tts.provider.clone()),
+            tts_fallback: None,
+            tts_fallback_name: None,
+            avatar_descriptor,
+            stt_descriptor: Some(stt_descriptor),
+            llm_descriptor: Some(llm_descriptor),
+            tts_descriptor: Some(tts_descriptor),
+            tts_fallback_descriptor: None,
+            voice_profile: None,
+        })
+    }
+
     fn from_env_with_secure_store(
         require_voice: bool,
         allow_secure_store: bool,
@@ -116,9 +168,17 @@ impl ProviderBundle {
             (None, None) if !require_voice => (None, None, None, None),
             (Some(stt_name), Some(llm_name)) => {
                 let (stt, stt_descriptor) =
-                    build_stt(&stt_name, matching_stt_profile(&stt_name, profile.as_ref()))?;
+                    build_stt(
+                    &stt_name,
+                    matching_stt_profile(&stt_name, profile.as_ref()),
+                    ProviderSource::EnvironmentFirst,
+                )?;
                 let (llm, llm_descriptor) =
-                    build_llm(&llm_name, matching_llm_profile(&llm_name, profile.as_ref()))?;
+                    build_llm(
+                    &llm_name,
+                    matching_llm_profile(&llm_name, profile.as_ref()),
+                    ProviderSource::EnvironmentFirst,
+                )?;
                 (
                     Some(stt),
                     Some(llm),
@@ -348,18 +408,22 @@ fn matching_llm_profile<'a>(
 fn build_stt(
     name: &str,
     profile: Option<&ProviderCredentialProfile>,
+    source: ProviderSource,
 ) -> Result<(Box<dyn SttPort>, ProviderDescriptor), String> {
-    let endpoint = required_value(
+    let endpoint = provider_value(
         "VPR_OWNER_LAB_STT_ENDPOINT",
         profile.map(|profile| profile.stt_endpoint.as_str()),
+        source,
     )?;
-    let api_key = required_value(
+    let api_key = provider_value(
         "VPR_OWNER_LAB_STT_API_KEY",
         profile.map(|profile| profile.stt_api_key.as_str()),
+        source,
     )?;
-    let model = required_value(
+    let model = provider_value(
         "VPR_OWNER_LAB_STT_MODEL",
         profile.map(|profile| profile.stt_model.as_str()),
+        source,
     )?;
     let (canonical, provider): (&str, Box<dyn SttPort>) = match name {
         "openai" | "openai-transcription" => (
@@ -395,22 +459,29 @@ fn build_stt(
 fn build_llm(
     name: &str,
     profile: Option<&ProviderCredentialProfile>,
+    source: ProviderSource,
 ) -> Result<(Box<dyn LlmPort>, ProviderDescriptor), String> {
-    let endpoint = required_value(
+    let endpoint = provider_value(
         "VPR_OWNER_LAB_LLM_ENDPOINT",
         profile.map(|profile| profile.llm_endpoint.as_str()),
+        source,
     )?;
-    let api_key = required_value(
+    let api_key = provider_value(
         "VPR_OWNER_LAB_LLM_API_KEY",
         profile.map(|profile| profile.llm_api_key.as_str()),
+        source,
     )?;
-    let model = required_value(
+    let model = provider_value(
         "VPR_OWNER_LAB_LLM_MODEL",
         profile.map(|profile| profile.llm_model.as_str()),
+        source,
     )?;
     let wire = llm_wire::resolve_wire(
         openai_compatible_provider_name(name).unwrap_or(name),
-        optional_env,
+        |name| match source {
+            ProviderSource::EnvironmentFirst => optional_env(name),
+            ProviderSource::ExplicitOnly => None,
+        },
     )?;
     let (canonical, provider): (&str, Box<dyn LlmPort>) =
         if let Some(canonical) = openai_compatible_provider_name(name) {
@@ -429,7 +500,7 @@ fn build_llm(
                     .filter(|stored| stored.llm_provider == "yandex")
                     .and_then(|_| model.strip_prefix("gpt://"))
                     .and_then(|path| path.split('/').next());
-                let folder = required_value("VPR_OWNER_LAB_LLM_PROJECT_ID", stored_folder)?;
+                let folder = provider_value("VPR_OWNER_LAB_LLM_PROJECT_ID", stored_folder, source)?;
                 if !model.starts_with(&format!("gpt://{folder}/")) {
                     return Err("YANDEX_LLM_MODEL_FOLDER_MISMATCH".into());
                 }
@@ -553,6 +624,20 @@ fn resolved_value(name: &'static str, stored: Option<&str>) -> Option<String> {
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
     })
+}
+
+fn provider_value(
+    name: &'static str,
+    stored: Option<&str>,
+    source: ProviderSource,
+) -> Result<String, String> {
+    match source {
+        ProviderSource::EnvironmentFirst => required_value(name, stored),
+        ProviderSource::ExplicitOnly => stored
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| format!("owner provider setting {name} missing")),
+    }
 }
 
 fn required_value(name: &'static str, stored: Option<&str>) -> Result<String, String> {
