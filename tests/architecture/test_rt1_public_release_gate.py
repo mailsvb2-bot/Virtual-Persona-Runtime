@@ -27,7 +27,8 @@ class Rt1PublicReleaseGateTests(unittest.TestCase):
         helper = (SRC / "http_rt1_public_origin.rs").read_text(encoding="utf-8")
         self.assertIn("pub(super) fn publication_qualification()", helper)
         self.assertIn('Err("RT1_PUBLIC_RELEASE_QUALIFICATION_REQUIRED")', helper)
-        self.assertIn("if configured().map_err", helper)
+        self.assertIn('let origin = configured().map_err', helper)
+        self.assertIn('publication_qualification_for(origin.as_deref())', helper)
 
     def test_rights_and_budget_are_not_mislabeled_as_runtime(self):
         rights = json.loads((ROOT / "contracts/rt1-consent-rights-0.1.json").read_text())
