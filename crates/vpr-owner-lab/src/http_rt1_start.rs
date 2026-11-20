@@ -7,21 +7,45 @@ use super::{
     restore_reviewed_persona_for_visitor, startup_errors, verified_worker,
 };
 use std::sync::Arc;
+use vpr_owner_lab::{
+    OwnerProviderProfile, VisitorOwnerBinding, profile_for_owner,
+};
 
 fn selected_provider_bundle(
     session_id: &str,
+    owner: &VisitorOwnerBinding,
+    scoped: Option<&OwnerProviderProfile>,
 ) -> Result<(ProviderBundle, Option<Arc<Rt1RemoteMediaRevocation>>), HttpResponse> {
     if verified_worker::selected() {
-        let (remote, avatar) = verified_worker::prepare(session_id)?;
-        let providers = ProviderBundle::from_env_with_avatar(true, avatar)
-            .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
-        // The worker accepts PCM, not provider text. Without canonical TTS
-        // the browser must not receive a voice-enabled session.
+        let (remote, avatar) = if let Some(scoped) = scoped {
+            verified_worker::prepare_bound(
+                session_id,
+                &scoped.worker_endpoint,
+                &scoped.worker_token,
+                &owner.persona_id,
+                owner.persona_version,
+            )?
+        } else {
+            verified_worker::prepare(session_id)?
+        };
+        let providers = if let Some(scoped) = scoped {
+            ProviderBundle::from_explicit_owner_profile_with_avatar(
+                &owner.owner_id,
+                &scoped.profile,
+                avatar,
+            )
+        } else {
+            ProviderBundle::from_env_with_avatar(true, avatar)
+        }
+        .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
         if providers.tts.is_none() {
             return Err(error_response(503, "RT1_TTS_NOT_CONFIGURED"));
         }
         Ok((providers, Some(remote)))
     } else {
+        if scoped.is_some() {
+            return Err(error_response(503, "RT1_OWNER_WORKER_REQUIRED"));
+        }
         let providers = ProviderBundle::from_env(false)
             .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
         Ok((providers, None))
@@ -114,17 +138,30 @@ fn bind_optional_memory_on_start(
 // returned manager is reused by the required second admission at START.
 fn admitted_visitor_manager(
     token: &str,
-) -> Result<Arc<vpr_owner_lab::VisitorSessionManager>, HttpResponse> {
-    let manager = Rt1OwnerController::new().visitor_sessions();
+) -> Result<
+    (
+        Arc<vpr_owner_lab::VisitorSessionManager>,
+        VisitorOwnerBinding,
+        Option<OwnerProviderProfile>,
+    ),
+    HttpResponse,
+> {
+    let controller = Rt1OwnerController::new();
+    let manager = controller.visitor_sessions();
     manager
         .preflight_visitor(token)
         .map_err(|_| error_response(409, "RT1_VISITOR_ACCESS_DENIED"))?;
-    // Never allocate any provider or remote media for a secondary owner
-    // while the legacy provider stack still has primary-only credentials.
-    Rt1OwnerController::new()
-        .require_legacy_provider_owner(token)
+    let owner = controller
+        .owner_binding_for_visitor(token)
+        .map_err(|_| error_response(409, "RT1_VISITOR_ACCESS_DENIED"))?;
+    let scoped = profile_for_owner(&owner.owner_id)
         .map_err(|_| error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"))?;
-    Ok(manager)
+    if scoped.is_none() {
+        controller
+            .require_legacy_provider_owner(token)
+            .map_err(|_| error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"))?;
+    }
+    Ok((manager, owner, scoped))
 }
 
 // Serialize the already-authorized visitor grant without extending the
@@ -159,9 +196,9 @@ pub(super) fn visitor_start(
     if !body.consent {
         return Err(error_response(403, "CONSENT_REQUIRED"));
     }
-    let manager = admitted_visitor_manager(&body.visitor_token)?;
+    let (manager, owner, scoped) = admitted_visitor_manager(&body.visitor_token)?;
     let (session_id, _reservation) = reserve_session_identity(state)?;
-    let (providers, worker) = selected_provider_bundle(&session_id)?;
+    let (providers, worker) = selected_provider_bundle(&session_id, &owner, scoped.as_ref())?;
     let mut engine = super::super::engine_bootstrap::assemble(providers, true)
         .map_err(|_| error_response(503, "RT1_ENGINE_UNAVAILABLE"))?;
     restore_reviewed_persona_for_visitor(&mut engine, &body.visitor_token)
