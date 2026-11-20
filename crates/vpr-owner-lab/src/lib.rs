@@ -45,6 +45,10 @@ pub use persona_persistence::{
 pub use persona_store_lease::acquire_persona_store_lease;
 pub use rt1_owner_controller::Rt1OwnerController;
 pub use rt1_owner_provider_profile::OwnerProviderProfile;
+#[cfg(windows)]
+pub use rt1_owner_provider_profile::{
+    delete_owner_provider_profile, save_owner_provider_profile,
+};
 pub use rt1_remote_media_revocation::Rt1RemoteMediaRevocation;
 pub use rt1_visitor_conversation::{Rt1BrowserDeliveryGuard, Rt1VisitorConversation};
 pub use rt1_visitor_session::Rt1VisitorSession;
