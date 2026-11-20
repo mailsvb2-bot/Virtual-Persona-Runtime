@@ -349,10 +349,17 @@ fn visitor_token_selects_only_its_reviewed_owner_persona() {
     assert_eq!(select(&primary_visitor).unwrap().persona_id, "persona-a");
     assert_eq!(select(&secondary_visitor).unwrap().persona_id, "persona-b");
     assert!(select(&"0".repeat(64)).is_err());
+    let a = admit_visitor_in_record(&record, &primary_visitor, 1).unwrap();
+    let b = admit_visitor_in_record(&record, &secondary_visitor, 1).unwrap();
+    assert_ne!(a.owner_id(), b.owner_id());
+    assert_eq!(published_visitor_workspace(&record, &a).unwrap().1, "persona-a");
+    assert_eq!(published_visitor_workspace(&record, &b).unwrap().1, "persona-b");
 
     record.workspace.as_mut().unwrap().pause(&primary_owner_token).unwrap();
     assert!(select(&primary_visitor).is_err());
+    assert!(admit_visitor_in_record(&record, &primary_visitor, 1).is_err());
     assert_eq!(select(&secondary_visitor).unwrap().persona_id, "persona-b");
+    assert!(admit_visitor_in_record(&record, &secondary_visitor, 1).is_ok());
 
     record.additional_owner_personas.values_mut().next().unwrap()
         .workspace.on_persona_correction(3).unwrap();
