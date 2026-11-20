@@ -55,8 +55,12 @@ browser tests behave unchanged. If an operator sets a public HTTPS visitor
 origin before durable rights and concurrency-safe budgets are implemented,
 the same route now fails closed with
 `RT1_PUBLIC_RELEASE_QUALIFICATION_REQUIRED`, **before the provider
-readiness or any new visitor bearer allocation**. No configuration boolean
-pretends to certify a real commercial release.
+readiness or any new visitor bearer allocation**. The same canonical
+visitor router denies stale prior invitations and all new visitor
+START/ANSWER/ICE/TEXT/VOICE/MEMORY requests when the public-origin
+qualification is missing; STOP/CLOSE deliberately remain reachable to
+drain active workers. No configuration boolean pretends to certify a
+real commercial release.
 
 Use `scripts/rt1_release_candidate_inventory.py` for an exact-head,
 ReleaseSpec-digested and explicitly **UNVERIFIED** maturity record; use
