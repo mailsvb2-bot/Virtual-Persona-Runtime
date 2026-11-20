@@ -78,6 +78,42 @@ impl Rt1WorkspaceService {
         Ok((record.snapshot.persona_id, record.snapshot.persona_version))
     }
 
+    /// Select a reviewed Persona using ONLY the canonical server-issued visitor
+    /// bearer. Never restore the process-global owner Persona into a visitor
+    /// engine selected by another account's publication.
+    pub(crate) fn reviewed_snapshot_for_visitor(
+        &self,
+        bearer_token: &str,
+    ) -> Result<crate::owner_context::DurableReviewedOwnerContextSnapshot, String> {
+        crate::persona_store_lease::require_live_runtime_owner()?;
+        let _transaction = persona_transaction::begin_workspace(self.transaction)?;
+        let record = required_persona()?;
+        let now = server_now_millis()?;
+        if let Some(workspace) = &record.workspace {
+            if admit_from_workspace(
+                workspace,
+                bearer_token,
+                &record.snapshot.persona_id,
+                record.snapshot.persona_version,
+                now,
+            ).is_ok() {
+                return Ok(record.snapshot);
+            }
+        }
+        for additional in record.additional_owner_personas.values() {
+            if admit_from_workspace(
+                &additional.workspace,
+                bearer_token,
+                &additional.snapshot.persona_id,
+                additional.snapshot.persona_version,
+                now,
+            ).is_ok() {
+                return Ok(additional.snapshot.clone());
+            }
+        }
+        Err("visitor authorization denied".into())
+    }
+
     /// Server-side owner identification by a secret that has never been stored
     /// in plaintext. The old anonymous Owner Lab CSRF token is not an account.
     ///
