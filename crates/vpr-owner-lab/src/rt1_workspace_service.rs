@@ -11,6 +11,8 @@ use crate::persona_persistence::{PersistedPersonaV2, commit_current_record, load
 use crate::persona_transaction::{self, CANONICAL_TRANSACTION};
 use crate::rt1_visitor_session_manager::{PendingVisitorRevocations, VisitorSessionManager};
 use crate::rt1_workspace::OwnerWorkspaceRecord;
+#[path = "rt1_workspace_accounts.rs"]
+mod accounts;
 
 #[derive(Serialize)]
 pub struct WorkspaceStatus {
