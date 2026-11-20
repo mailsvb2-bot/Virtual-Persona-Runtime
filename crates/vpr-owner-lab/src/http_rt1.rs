@@ -7,7 +7,7 @@ use parking_lot::{Condvar, Mutex};
 use serde::Deserialize;
 use vpr_owner_lab::{
     OwnerContextState, ProviderBundle, Rt1OwnerController, Rt1RemoteMediaRevocation,
-    Rt1VisitorConversation, restore_reviewed_persona,
+    Rt1VisitorConversation, restore_reviewed_persona_for_visitor,
 };
 
 use super::{AppState, HttpResponse, error_response, json_response, parse_json};
@@ -264,6 +264,10 @@ fn owner_status(request: &mut tiny_http::Request) -> Rt1HttpResult {
 
 fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
     let body: OwnerPublish = parse_json(request)?;
+    // Public qualification must run before account lookup, engine checks,
+    // provider construction and visitor token issuance.
+    public_origin::publication_qualification()
+        .map_err(|reason| startup_errors::publication_error_response(reason))?;
     // Resolve account identity from the authenticated server-side credential,
     // never from a caller-provided owner ID. The legacy Owner Lab engine is
     // global, so it MUST NOT authorize a second owner's publication.
