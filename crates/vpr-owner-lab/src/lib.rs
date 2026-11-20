@@ -9,6 +9,7 @@ mod persona_transaction;
 mod provider_credentials;
 mod providers;
 mod rt1_owner_controller;
+mod rt1_owner_provider_profile;
 mod rt1_remote_media_revocation;
 mod rt1_visitor_conversation;
 mod rt1_visitor_session;
@@ -43,6 +44,7 @@ pub use persona_persistence::{
 };
 pub use persona_store_lease::acquire_persona_store_lease;
 pub use rt1_owner_controller::Rt1OwnerController;
+pub use rt1_owner_provider_profile::{OwnerProviderProfile, profile_for_owner};
 pub use rt1_remote_media_revocation::Rt1RemoteMediaRevocation;
 pub use rt1_visitor_conversation::{Rt1BrowserDeliveryGuard, Rt1VisitorConversation};
 pub use rt1_visitor_session::Rt1VisitorSession;
