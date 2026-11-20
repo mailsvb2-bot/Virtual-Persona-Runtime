@@ -130,7 +130,7 @@ fn admitted_visitor_manager(
 // Serialize the already-authorized visitor grant without extending the
 // provider START critical section or changing its STOP ownership.
 fn visitor_start_grant(
-    session_id: String,
+    session_id: &str,
     bundle: impl serde::Serialize,
     voice_enabled: bool,
     conversation: Arc<Rt1VisitorConversation>,
@@ -143,8 +143,7 @@ fn visitor_start_grant(
                 "signal": bundle,
                 "voice_enabled": voice_enabled,
                 // Worker/diagnostic SDP already contains ICE candidates.
-                "diagnostic_rtp": verified_worker::selected()
-                    || std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
+                "diagnostic_rtp": verified_worker::selected() || std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
             }),
         ),
         conversation,
@@ -251,7 +250,7 @@ pub(super) fn visitor_start(
         }
         return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
     }
-    Ok(visitor_start_grant(session_id, bundle, voice_enabled, conversation))
+    Ok(visitor_start_grant(&session_id, bundle, voice_enabled, conversation))
 }
 
 pub(super) fn validate_legacy_owner_publication(
