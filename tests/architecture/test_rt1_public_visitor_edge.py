@@ -67,9 +67,10 @@ class Rt1VisitorPublicEdgeTests(unittest.TestCase):
         self.assertIn('history.replaceState(null, "", window.location.pathname + window.location.search)', browser)
         self.assertIn('const configured = ownerSnapshot?.public_visitor_origin;', browser)
         owner = OWNER_API.read_text(encoding="utf-8")
-        self.assertIn('VPR_RT1_PUBLIC_VISITOR_ORIGIN', owner)
-        self.assertIn('public_origin::verified(&raw)', owner)
+        self.assertIn('public_origin::configured()', owner)
         validator = (ROOT / "crates/vpr-owner-lab/src/http_rt1_public_origin.rs").read_text(encoding="utf-8")
+        self.assertIn('VPR_RT1_PUBLIC_VISITOR_ORIGIN', validator)
+        self.assertIn('pub(super) fn configured()', validator)
         self.assertIn('pub(super) fn verified(', validator)
         self.assertIn('RT1_PUBLIC_VISITOR_ORIGIN_INVALID', owner)
 
