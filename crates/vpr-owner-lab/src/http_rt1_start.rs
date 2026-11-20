@@ -261,9 +261,7 @@ pub(super) fn validate_legacy_owner_publication(
     let primary = controller
         .current_persona_identity()
         .map_err(|_| error_response(503, "RT1_OWNER_ENGINE_UNAVAILABLE"))?;
-    if (owner.persona_id.as_str(), owner.persona_version)
-        != (primary.0.as_str(), primary.1)
-    {
+    if (owner.persona_id.as_str(), owner.persona_version) != (primary.0.as_str(), primary.1) {
         return Err(error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"));
     }
     Ok(owner)
