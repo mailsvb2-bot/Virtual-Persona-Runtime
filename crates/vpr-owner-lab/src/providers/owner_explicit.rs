@@ -1,8 +1,8 @@
 //! Explicit-owner provider composition. This is the same canonical bundle
 //! and adapter factory as legacy Owner Lab, but without global credentials.
 use super::{
-    ProviderBundle, ProviderCredentialProfile, RealtimeAvatarPort,
-    build_llm, build_stt, descriptor, ensure_avatar_pcm_compatible, required_value,
+    ProviderBundle, ProviderCredentialProfile, RealtimeAvatarPort, build_llm, build_stt,
+    descriptor, ensure_avatar_pcm_compatible, required_value,
 };
 use super::tts_factory::build_tts_explicit;
 
