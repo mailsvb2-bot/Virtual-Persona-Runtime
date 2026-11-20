@@ -13,10 +13,7 @@ use crate::persona_transaction;
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::rt1_workspace::OwnerWorkspaceRecord;
 
-fn status_for(
-    record: &PersistedPersonaV2,
-    owner_token: &str,
-) -> Result<WorkspaceStatus, String> {
+fn status_for(record: &PersistedPersonaV2, owner_token: &str) -> Result<WorkspaceStatus, String> {
     // Owner tokens are looked up only against server-stored credential hashes.
     // Neither owner_id nor Persona identity comes from the HTTP request.
     if let Some(primary) = &record.workspace {
@@ -85,7 +82,10 @@ fn provision_in_record(
     }
     record.additional_owner_personas.insert(
         owner_id.clone(),
-        AdditionalOwnerPersona { snapshot, workspace },
+        AdditionalOwnerPersona {
+            snapshot,
+            workspace,
+        },
     );
     record.clone().validate()?;
     Ok((owner_id, owner_token))
@@ -108,7 +108,9 @@ fn correction_in_record(
     {
         return Err("cross-owner or nonmonotonic Persona correction denied".into());
     }
-    owned.workspace.on_persona_correction(next.persona_version)?;
+    owned
+        .workspace
+        .on_persona_correction(next.persona_version)?;
     owned.snapshot = next;
     let owner_id = owner_id.clone();
     record.clone().validate()?;
