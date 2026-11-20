@@ -127,6 +127,30 @@ fn admitted_visitor_manager(
     Ok(manager)
 }
 
+// Serialize the already-authorized visitor grant without extending the
+// provider START critical section or changing its STOP ownership.
+fn visitor_start_grant(
+    session_id: String,
+    bundle: impl serde::Serialize,
+    voice_enabled: bool,
+    conversation: Arc<Rt1VisitorConversation>,
+) -> (HttpResponse, Arc<Rt1VisitorConversation>) {
+    (
+        json_response(
+            200,
+            &serde_json::json!({
+                "session_id": session_id,
+                "signal": bundle,
+                "voice_enabled": voice_enabled,
+                // Worker/diagnostic SDP already contains ICE candidates.
+                "diagnostic_rtp": verified_worker::selected()
+                    || std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
+            }),
+        ),
+        conversation,
+    )
+}
+
 pub(super) fn visitor_start(
     request: &mut tiny_http::Request,
     state: &AppState,
@@ -227,22 +251,7 @@ pub(super) fn visitor_start(
         }
         return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
     }
-    Ok((
-        json_response(
-            200,
-            &serde_json::json!({
-                "session_id": session_id,
-                "signal": bundle,
-                "voice_enabled": voice_enabled,
-                // The existing aiortc operation worker performs non-trickle ICE:
-                // candidates are embedded in SDP, and its separate ICE endpoint
-                // is intentionally denied. Preserve the browser's non-trickle
-                // signaling mode for both worker and diagnostic RTP paths.
-                "diagnostic_rtp": verified_worker::selected() || std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
-            }),
-        ),
-        conversation,
-    ))
+    Ok(visitor_start_grant(session_id, bundle, voice_enabled, conversation))
 }
 
 pub(super) fn validate_legacy_owner_publication(
