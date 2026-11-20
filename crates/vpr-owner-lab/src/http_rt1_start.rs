@@ -251,7 +251,12 @@ pub(super) fn visitor_start(
         }
         return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
     }
-    Ok(visitor_start_grant(&session_id, bundle, voice_enabled, conversation))
+    Ok(visitor_start_grant(
+        &session_id,
+        bundle,
+        voice_enabled,
+        conversation,
+    ))
 }
 
 pub(super) fn validate_legacy_owner_publication(
