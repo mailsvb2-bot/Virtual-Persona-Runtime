@@ -31,15 +31,27 @@ impl Rt1VisitorSession {
     /// store and must never be used as a real visitor admission.
     #[cfg(all(test, not(windows)))]
     pub(crate) fn inert_for_revocation_test() -> Self {
+        Self::inert_for_revocation_test_for_owner("owner")
+    }
+
+    #[cfg(all(test, not(windows)))]
+    pub(crate) fn inert_for_revocation_test_for_owner(owner_id: &str) -> Self {
         use vpr_policy::publication_lifecycle::CanonicalPublication;
         let mut publication =
-            CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
-        publication.publish("owner", 1, true).unwrap();
+            CanonicalPublication::new(owner_id, "persona", "publication", 1).unwrap();
+        publication.publish(owner_id, 1, true).unwrap();
         Self {
             workspace: Arc::new(Rt1WorkspaceService::new()),
             bearer_token: "not-an-admitted-visitor".into(),
             permit: publication.visitor_lease(true).unwrap(),
         }
+    }
+
+    /// The canonical owner identity retained in the publication permit.
+    /// The visitor has no authority to select or replace this identity.
+    #[must_use]
+    pub(crate) fn owner_id(&self) -> &str {
+        self.permit.owner_id()
     }
 
     /// # Errors

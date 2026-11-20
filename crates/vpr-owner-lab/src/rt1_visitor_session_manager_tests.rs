@@ -11,6 +11,7 @@ fn drained_transports_stop_once_outside_registry_lock() {
     let callback_manager = Arc::clone(&manager);
     let callback_stops = Arc::clone(&stops);
     let session = Arc::new(ManagedVisitor {
+        owner_id: "owner".to_owned(),
         egress: Arc::new(VisitorEgressState::default()),
         authority: Rt1VisitorSession::inert_for_revocation_test(),
         revoked: AtomicBool::new(false),
@@ -48,6 +49,7 @@ fn publication_drain_revokes_runtime_permits_before_remote_stop() {
     manager.sessions.lock().insert(
         "egress".into(),
         Arc::new(ManagedVisitor {
+            owner_id: "owner".to_owned(),
             egress: Arc::new(VisitorEgressState::default()),
             authority: Rt1VisitorSession::inert_for_revocation_test(),
             revoked: AtomicBool::new(false),
@@ -101,6 +103,7 @@ fn revoke_does_not_wait_for_stalled_provider_worker() {
     manager.sessions.lock().insert(
         "stalled".into(),
         Arc::new(ManagedVisitor {
+            owner_id: "owner".to_owned(),
             egress: Arc::new(VisitorEgressState::default()),
             authority: Rt1VisitorSession::inert_for_revocation_test(),
             revoked: AtomicBool::new(false),
@@ -141,6 +144,7 @@ fn registry_drain_does_not_stop_sessions_added_after_drain() {
     let old_counter = Arc::clone(&old_stops);
     let new_counter = Arc::clone(&new_stops);
     let old_session = Arc::new(ManagedVisitor {
+        owner_id: "owner".to_owned(),
         egress: Arc::new(VisitorEgressState::default()),
         authority: Rt1VisitorSession::inert_for_revocation_test(),
         revoked: AtomicBool::new(false),
@@ -151,6 +155,7 @@ fn registry_drain_does_not_stop_sessions_added_after_drain() {
         }),
     });
     let new_session = Arc::new(ManagedVisitor {
+        owner_id: "owner".to_owned(),
         egress: Arc::new(VisitorEgressState::default()),
         authority: Rt1VisitorSession::inert_for_revocation_test(),
         revoked: AtomicBool::new(false),
@@ -187,6 +192,7 @@ fn unknown_visitor_never_stages_audio() {
 fn revoked_visitor_never_stages_audio() {
     let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
     let session = Arc::new(ManagedVisitor {
+        owner_id: "owner".to_owned(),
         egress: Arc::new(VisitorEgressState::default()),
         authority: Rt1VisitorSession::inert_for_revocation_test(),
         revoked: AtomicBool::new(true),
@@ -212,6 +218,7 @@ fn stale_provider_admission_revokes_existing_transport_exactly_once() {
     let stopped = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&stopped);
     let session = Arc::new(ManagedVisitor {
+        owner_id: "owner".to_owned(),
         egress: Arc::new(VisitorEgressState::default()),
         authority: Rt1VisitorSession::inert_for_revocation_test(),
         revoked: AtomicBool::new(false),
@@ -329,6 +336,7 @@ fn owner_revocation_dispatches_actual_remote_operation_cancel_http() {
     manager.sessions.lock().insert(
         "owner-session".into(),
         Arc::new(ManagedVisitor {
+            owner_id: "owner".to_owned(),
             egress: Arc::new(VisitorEgressState::default()),
             authority: Rt1VisitorSession::inert_for_revocation_test(),
             revoked: AtomicBool::new(false),
@@ -347,4 +355,68 @@ fn owner_revocation_dispatches_actual_remote_operation_cancel_http() {
     assert_eq!(manager.active_count(), 0);
     manager.revoke_all();
     assert_eq!(request_count.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn owner_a_pause_never_revokes_owner_b_session_even_during_republish() {
+    use std::sync::atomic::AtomicUsize;
+
+    let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
+    let a_stops = Arc::new(AtomicUsize::new(0));
+    let b_stops = Arc::new(AtomicUsize::new(0));
+    for (owner, session_id, count) in [
+        ("owner-a", "visitor-a", Arc::clone(&a_stops)),
+        ("owner-b", "visitor-b", Arc::clone(&b_stops)),
+    ] {
+        let authority = Rt1VisitorSession::inert_for_revocation_test_for_owner(owner);
+        let session = Arc::new(ManagedVisitor {
+            owner_id: authority.owner_id().to_owned(),
+            authority,
+            revoked: AtomicBool::new(false),
+            stopped: AtomicBool::new(false),
+            fast_revoke: Arc::new(|| {}),
+            stop: Arc::new(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+            }),
+            egress: Arc::new(VisitorEgressState::default()),
+        });
+        manager
+            .sessions
+            .lock()
+            .insert(session_id.to_owned(), session);
+    }
+
+    let pending_a = manager.take_for_revocation_for_owner("owner-a");
+    assert_eq!(manager.active_count(), 1);
+    assert!(
+        !manager.sessions.lock()["visitor-b"]
+            .revoked
+            .load(Ordering::Acquire)
+    );
+    pending_a.revoke();
+    assert_eq!(a_stops.load(Ordering::SeqCst), 1);
+    assert_eq!(b_stops.load(Ordering::SeqCst), 0);
+
+    // A fresh owner A session can be opened while owner B stays alive.
+    let authority = Rt1VisitorSession::inert_for_revocation_test_for_owner("owner-a");
+    manager.sessions.lock().insert(
+        "visitor-a-new".into(),
+        Arc::new(ManagedVisitor {
+            owner_id: authority.owner_id().to_owned(),
+            authority,
+            revoked: AtomicBool::new(false),
+            stopped: AtomicBool::new(false),
+            fast_revoke: Arc::new(|| {}),
+            stop: Arc::new(|| {}),
+            egress: Arc::new(VisitorEgressState::default()),
+        }),
+    );
+    let pending_b = manager.take_for_revocation_for_owner("owner-b");
+    assert_eq!(manager.active_count(), 1);
+    assert!(manager.sessions.lock().contains_key("visitor-a-new"));
+    pending_b.revoke();
+    assert_eq!(b_stops.load(Ordering::SeqCst), 1);
+    manager.revoke_all();
+    assert_eq!(a_stops.load(Ordering::SeqCst), 1);
+    assert_eq!(b_stops.load(Ordering::SeqCst), 1);
 }

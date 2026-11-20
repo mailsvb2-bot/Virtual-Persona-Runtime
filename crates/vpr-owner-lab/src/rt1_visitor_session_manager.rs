@@ -20,6 +20,7 @@ const MAX_ACTIVE_VISITORS: usize = 8;
 type StopCallback = Arc<dyn Fn() + Send + Sync>;
 
 struct ManagedVisitor {
+    owner_id: String,
     authority: Rt1VisitorSession,
     revoked: AtomicBool,
     stopped: AtomicBool,
@@ -128,7 +129,9 @@ impl VisitorSessionManager {
             use std::fmt::Write;
             write!(&mut id, "{octet:02x}").map_err(|_| "session identifier error")?;
         }
+        let owner_id = authority.owner_id().to_owned();
         let session = Arc::new(ManagedVisitor {
+            owner_id,
             authority,
             revoked: AtomicBool::new(false),
             stopped: AtomicBool::new(false),
@@ -270,6 +273,31 @@ impl VisitorSessionManager {
     /// Call only AFTER the canonical durable owner mutation succeeds.
     pub fn revoke_all(&self) {
         self.take_for_revocation().revoke();
+    }
+
+    /// Drain ONLY sessions whose identity was bound to this canonical owner
+    /// during visitor admission. A pause/correction by another owner MUST NOT
+    /// stop an unrelated visitor. Call under the shared publication lock and
+    /// always after a successful durable mutation.
+    pub(crate) fn take_for_revocation_for_owner(
+        &self,
+        owner_id: &str,
+    ) -> PendingVisitorRevocations {
+        let sessions = {
+            let mut active = self.sessions.lock();
+            let keys: Vec<_> = active
+                .iter()
+                .filter(|(_, session)| session.owner_id == owner_id)
+                .map(|(id, _)| id.clone())
+                .collect();
+            keys.into_iter()
+                .filter_map(|id| active.remove(&id))
+                .collect::<Vec<_>>()
+        };
+        for session in &sessions {
+            session.mark_revoked();
+        }
+        PendingVisitorRevocations { sessions }
     }
 
     /// Drain local registrations while the caller holds the canonical
