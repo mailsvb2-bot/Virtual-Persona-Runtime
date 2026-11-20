@@ -356,3 +356,61 @@ fn owner_revocation_dispatches_actual_remote_operation_cancel_http() {
     manager.revoke_all();
     assert_eq!(request_count.load(Ordering::SeqCst), 1);
 }
+
+
+#[test]
+fn owner_a_pause_never_revokes_owner_b_session_even_during_republish() {
+    use std::sync::atomic::AtomicUsize;
+
+    let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
+    let a_stops = Arc::new(AtomicUsize::new(0));
+    let b_stops = Arc::new(AtomicUsize::new(0));
+    for (owner, session_id, count) in [
+        ("owner-a", "visitor-a", Arc::clone(&a_stops)),
+        ("owner-b", "visitor-b", Arc::clone(&b_stops)),
+    ] {
+        let authority = Rt1VisitorSession::inert_for_revocation_test_for_owner(owner);
+        let session = Arc::new(ManagedVisitor {
+            owner_id: authority.owner_id().to_owned(),
+            authority,
+            revoked: AtomicBool::new(false),
+            stopped: AtomicBool::new(false),
+            fast_revoke: Arc::new(|| {}),
+            stop: Arc::new(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+            }),
+            egress: Arc::new(VisitorEgressState::default()),
+        });
+        manager.sessions.lock().insert(session_id.to_owned(), session);
+    }
+
+    let pending_a = manager.take_for_revocation_for_owner("owner-a");
+    assert_eq!(manager.active_count(), 1);
+    assert!(!manager.sessions.lock()["visitor-b"].revoked.load(Ordering::Acquire));
+    pending_a.revoke();
+    assert_eq!(a_stops.load(Ordering::SeqCst), 1);
+    assert_eq!(b_stops.load(Ordering::SeqCst), 0);
+
+    // A fresh owner A session can be opened while owner B stays alive.
+    let authority = Rt1VisitorSession::inert_for_revocation_test_for_owner("owner-a");
+    manager.sessions.lock().insert(
+        "visitor-a-new".into(),
+        Arc::new(ManagedVisitor {
+            owner_id: authority.owner_id().to_owned(),
+            authority,
+            revoked: AtomicBool::new(false),
+            stopped: AtomicBool::new(false),
+            fast_revoke: Arc::new(|| {}),
+            stop: Arc::new(|| {}),
+            egress: Arc::new(VisitorEgressState::default()),
+        }),
+    );
+    let pending_b = manager.take_for_revocation_for_owner("owner-b");
+    assert_eq!(manager.active_count(), 1);
+    assert!(manager.sessions.lock().contains_key("visitor-a-new"));
+    pending_b.revoke();
+    assert_eq!(b_stops.load(Ordering::SeqCst), 1);
+    manager.revoke_all();
+    assert_eq!(a_stops.load(Ordering::SeqCst), 1);
+    assert_eq!(b_stops.load(Ordering::SeqCst), 1);
+}
