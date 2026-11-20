@@ -43,6 +43,21 @@ pub(super) fn build_tts(
     )
 }
 
+/// Use a single owner's explicit validated TTS route without reading any
+/// process-wide environment value or the legacy Windows credential source.
+pub(super) fn build_tts_explicit(
+    stored: &StoredTtsCredential,
+) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
+    stored.validate()?;
+    build_tts_configured(
+        &stored.provider,
+        &stored.endpoint,
+        stored.api_key.clone(),
+        &stored.model,
+        &stored.voice,
+    )
+}
+
 pub(super) fn build_tts_fallback(
     name: &str,
 ) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
