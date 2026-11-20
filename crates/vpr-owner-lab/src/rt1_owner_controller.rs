@@ -43,6 +43,18 @@ impl Rt1OwnerController {
         self.workspace.current_persona_identity()
     }
 
+    /// Identify the exact owner and reviewed Persona from a server-issued
+    /// visitor bearer, before selecting any external provider credentials.
+    ///
+    /// # Errors
+    /// Rejects invalid, stale or revoked visitor authority.
+    pub fn owner_binding_for_visitor(
+        &self,
+        bearer_token: &str,
+    ) -> Result<crate::VisitorOwnerBinding, String> {
+        self.workspace.owner_binding_for_visitor(bearer_token)
+    }
+
     /// The legacy provider stack is not yet tenant-scoped.
     ///
     /// # Errors
