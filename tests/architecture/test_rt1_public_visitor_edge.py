@@ -17,6 +17,7 @@ STATIC_ROUTES = {
     "/rt1/visit",
     "/rt1.js",
     "/rt1.css",
+    "/mic-worklet.js",
     "/vendor/livekit-client.umd.js",
     "/api/rt1/visitor/bootstrap",
 }
@@ -32,8 +33,8 @@ class Rt1VisitorPublicEdgeTests(unittest.TestCase):
         self.assertEqual(exact, STATIC_ROUTES)
         self.assertEqual(regex, [WORKER_ROUTE])
         self.assertIn("location / { return 404; }", config)
-        self.assertEqual(config.count("proxy_pass http://127.0.0.1:8787;"), 6)
-        self.assertEqual(config.count("limit_except GET { deny all; }"), 5)
+        self.assertEqual(config.count("proxy_pass http://127.0.0.1:8787;"), 7)
+        self.assertEqual(config.count("limit_except GET { deny all; }"), 6)
         self.assertEqual(config.count("limit_except POST { deny all; }"), 1)
         self.assertNotIn("location /api/", config)
         self.assertNotIn("location /rt1/", config)
@@ -49,6 +50,8 @@ class Rt1VisitorPublicEdgeTests(unittest.TestCase):
         self.assertIn('proxy_set_header Origin "http://127.0.0.1:8787";', config)
         self.assertIn('proxy_set_header X-Forwarded-Host "";', config)
         self.assertIn('proxy_set_header Forwarded "";', config)
+        self.assertIn("proxy_send_timeout 95s;", config)
+        self.assertIn("proxy_read_timeout 95s;", config)
 
     def test_public_bootstrap_is_not_owner_lab_bootstrap(self):
         main = MAIN.read_text(encoding="utf-8")
