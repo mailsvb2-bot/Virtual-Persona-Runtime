@@ -49,7 +49,7 @@ fn publication_drain_revokes_runtime_permits_before_remote_stop() {
     manager.sessions.lock().insert(
         "egress".into(),
         Arc::new(ManagedVisitor {
-        owner_id: "owner".to_owned(),
+            owner_id: "owner".to_owned(),
             egress: Arc::new(VisitorEgressState::default()),
             authority: Rt1VisitorSession::inert_for_revocation_test(),
             revoked: AtomicBool::new(false),
@@ -103,7 +103,7 @@ fn revoke_does_not_wait_for_stalled_provider_worker() {
     manager.sessions.lock().insert(
         "stalled".into(),
         Arc::new(ManagedVisitor {
-        owner_id: "owner".to_owned(),
+            owner_id: "owner".to_owned(),
             egress: Arc::new(VisitorEgressState::default()),
             authority: Rt1VisitorSession::inert_for_revocation_test(),
             revoked: AtomicBool::new(false),
@@ -336,7 +336,7 @@ fn owner_revocation_dispatches_actual_remote_operation_cancel_http() {
     manager.sessions.lock().insert(
         "owner-session".into(),
         Arc::new(ManagedVisitor {
-        owner_id: "owner".to_owned(),
+            owner_id: "owner".to_owned(),
             egress: Arc::new(VisitorEgressState::default()),
             authority: Rt1VisitorSession::inert_for_revocation_test(),
             revoked: AtomicBool::new(false),
