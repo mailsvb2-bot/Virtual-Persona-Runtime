@@ -47,6 +47,31 @@ REQUIRED_MODEL_FILES = (
 )
 
 
+def validate_frame_batch(frames, expected_shape=None):
+    """Validate the sender's actual 8-bit BGR video contract, without pixels in evidence.
+
+    This is a structural CUDA output check, NOT proof of lip-sync or face quality.
+    A later window may not silently change frame geometry or pixel encoding.
+    """
+    if len(frames) != CHUNK_FRAMES:
+        raise RuntimeError("real model did not produce ten BGR frames")
+    shape = expected_shape
+    for frame in frames:
+        frame_shape = getattr(frame, "shape", None)
+        if (getattr(frame, "ndim", None) != 3
+                or not isinstance(frame_shape, tuple)
+                or len(frame_shape) != 3
+                or frame_shape[2] != 3
+                or not all(isinstance(n, int) and n > 0 for n in frame_shape)
+                or str(getattr(frame, "dtype", "")) != "uint8"):
+            raise RuntimeError("MuseTalk CUDA output must be nonempty uint8 BGR")
+        if shape is None:
+            shape = frame_shape
+        elif frame_shape != shape:
+            raise RuntimeError("MuseTalk CUDA output frame dimensions changed")
+    return shape
+
+
 def approved_model_digest(root: str | Path) -> str:
     """Hash the exact model/config inputs before torch or pickle executes.
 
@@ -342,8 +367,9 @@ class MuseTalkRenderer:
                     if composed is None or composed.ndim != 3:
                         raise RuntimeError("MuseTalk GPU generated invalid frame")
                     output.append(composed)
-            if len(output) != CHUNK_FRAMES:
-                raise RuntimeError("MuseTalk generated incomplete PCM window")
+            # Validate the same contract at every production GPU inference,
+            # not only while writing an offline hardware acceptance report.
+            validate_frame_batch(output)
             return output
 
 

@@ -20,6 +20,7 @@ import time
 from rt1_musetalk_renderer import (
     CHUNK_FRAMES, PCM_WINDOW_SAMPLES, VIDEO_FPS,
     renderer_from_environment, prepared_avatar_digest, approved_model_digest,
+    validate_frame_batch,
 )
 
 
@@ -50,6 +51,7 @@ def evaluate_windows(latencies_ms: list[float], *, max_window_ms: float) -> dict
     }
 
 
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--windows", type=int, default=20)
@@ -74,7 +76,11 @@ def main(argv=None) -> int:
     import numpy as np
     import torch
 
+    # Measure actual peak allocated GPU memory during the same warmed batch
+    # used for compute acceptance, not a guessed hardware requirement.
+    torch.cuda.reset_peak_memory_stats(renderer._device)
     times = []
+    expected_shape = None
     for frame_index in range(0, args.windows * CHUNK_FRAMES, CHUNK_FRAMES):
         # Non-silent deterministic PCM drives real Whisper->UNet->VAE; this
         # measures computational throughput, NOT quality of lip-sync.
@@ -85,11 +91,7 @@ def main(argv=None) -> int:
         frames = renderer._infer(samples, frame_index)
         torch.cuda.synchronize(renderer._device)
         ms = (time.perf_counter() - t0) * 1000
-        if len(frames) != CHUNK_FRAMES or any(
-            frame is None or frame.ndim != 3 or frame.shape[2] != 3
-            for frame in frames
-        ):
-            raise RuntimeError("real model did not produce ten valid BGR frames")
+        expected_shape = validate_frame_batch(frames, expected_shape)
         times.append(ms)
     result = evaluate_windows(times, max_window_ms=args.max_window_ms)
     result.update({
@@ -110,6 +112,12 @@ def main(argv=None) -> int:
         ),
         "startup_warmup_ms": round(model_load_ms, 3),
         "video_fps_target": VIDEO_FPS,
+        "frames_validated": args.windows * CHUNK_FRAMES,
+        "frame_height": expected_shape[0],
+        "frame_width": expected_shape[1],
+        "video_pixel_format": "bgr24-uint8",
+        "cuda_peak_allocated_bytes": torch.cuda.max_memory_allocated(renderer._device),
+        "cuda_device_total_memory_bytes": torch.cuda.get_device_properties(renderer._device).total_memory,
         "browser_av_offset_verified": False,
         "dual_track_stop_verified": False,
         "production_release_approved": False,
