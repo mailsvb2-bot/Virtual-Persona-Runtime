@@ -8,7 +8,9 @@ This repository is governed by `docs/CANON.md` and develops through bounded Rele
 
 ## Status
 
-Bootstrap / RT0 foundation. No capability is `PRODUCTION_READY` until exact-candidate evidence satisfies the Canon.
+**R0 functional milestone: ACCEPTED / CLOSED (20 October 2026). Current engineering focus: RT1.** The owner has accepted the real Windows Owner Lab audio/video, Russian conversation, STOP/continue and owner/visitor demonstration. See [the R0 functional milestone release](docs/releases/R0_FUNCTIONAL_MILESTONE_RELEASE.md) and its [original signed-off scope](docs/release-evidence/rt0/OWNER_FUNCTIONAL_ACCEPTANCE.md). Do **not** reopen the accepted R0 functional demo or repeat its live-provider spend as routine RT1 development.
+
+**Separate formal qualification:** `release.rt0_exit_gate` has not been shown to pass its exact-candidate evidence verifier. No capability is `PRODUCTION_READY`, and public RT1 publication stays gated. Treat any outstanding qualifications as separately named evidence requirements, not a generic demand to redo R0 functionality.
 
 ## RT0 Owner Lab
 

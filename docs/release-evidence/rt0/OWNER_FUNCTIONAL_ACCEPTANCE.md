@@ -1,5 +1,7 @@
 # R0 — owner functional acceptance (20 October 2026)
 
+**Functional milestone release/handoff:** [R0_FUNCTIONAL_MILESTONE_RELEASE.md](../../releases/R0_FUNCTIONAL_MILESTONE_RELEASE.md). Future implementation work targets RT1; this accepted R0 demo is a regression baseline, not an outstanding feature request.
+
 **Owner decision: R0 ACCEPTED / CLOSED for the agreed functional demonstration.**
 
 Accepted candidate: `c393bae4cb369c82ef3f9160b9ba5fc6dc2d5774`.
