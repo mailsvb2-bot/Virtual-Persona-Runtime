@@ -130,8 +130,10 @@ impl Rt1WorkspaceService {
         crate::persona_store_lease::require_live_runtime_owner()?;
         let _tx = persona_transaction::begin_workspace(self.transaction)?;
         let record = super::required_persona()?;
-        let permit = super::admit_visitor_in_record(&record, bearer_token, super::server_now_millis()?)?;
-        let (_, persona_id, persona_version) = super::published_visitor_workspace(&record, &permit)?;
+        let permit =
+            super::admit_visitor_in_record(&record, bearer_token, super::server_now_millis()?)?;
+        let (_, persona_id, persona_version) =
+            super::published_visitor_workspace(&record, &permit)?;
         Ok(super::VisitorOwnerBinding {
             owner_id: permit.owner_id().to_owned(),
             persona_id: persona_id.to_owned(),
@@ -142,7 +144,6 @@ impl Rt1WorkspaceService {
                 .is_some_and(|primary| primary.owner_id == permit.owner_id()),
         })
     }
-
 
     /// Existing single-owner route now understands exactly authenticated
     /// additional owners, without treating browser identity as authority.
