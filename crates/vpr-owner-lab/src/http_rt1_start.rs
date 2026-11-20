@@ -296,12 +296,10 @@ pub(super) fn visitor_start(
     ))
 }
 
-pub(super) fn validate_legacy_owner_publication(
+pub(super) fn validate_owner_publication(
     owner_token: &str,
     expected_version: u64,
-) -> Result<vpr_owner_lab::WorkspaceStatus, HttpResponse> {
-    // Resolve the owner solely from the canonical credential; this global
-    // provider stack is not safe for an additional owner's Persona.
+) -> Result<(vpr_owner_lab::WorkspaceStatus, Option<OwnerProviderProfile>), HttpResponse> {
     let controller = Rt1OwnerController::new();
     let owner = controller
         .status(owner_token)
@@ -309,11 +307,47 @@ pub(super) fn validate_legacy_owner_publication(
     if owner.persona_version != expected_version {
         return Err(error_response(409, "RT1_STALE_PERSONA_VERSION"));
     }
-    let primary = controller
-        .current_persona_identity()
-        .map_err(|_| error_response(503, "RT1_OWNER_ENGINE_UNAVAILABLE"))?;
-    if (owner.persona_id.as_str(), owner.persona_version) != (primary.0.as_str(), primary.1) {
-        return Err(error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"));
+    let scoped = profile_for_owner(&owner.owner_id)
+        .map_err(|_| error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"))?;
+    if scoped.is_none() {
+        let primary = controller
+            .current_persona_identity()
+            .map_err(|_| error_response(503, "RT1_OWNER_ENGINE_UNAVAILABLE"))?;
+        if (owner.persona_id.as_str(), owner.persona_version) != (primary.0.as_str(), primary.1) {
+            return Err(error_response(503, "RT1_OWNER_PROVIDER_BINDING_REQUIRED"));
+        }
     }
-    Ok(owner)
+    Ok((owner, scoped))
+}
+
+pub(super) fn publication_scoped_owner_ready(
+    owner: &vpr_owner_lab::WorkspaceStatus,
+    scoped: &OwnerProviderProfile,
+) -> Result<(), String> {
+    publication_media_transport_ready(
+        verified_worker::selected(),
+        std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
+        Some(&scoped.worker_endpoint),
+        Some(&scoped.worker_token),
+    )
+    .map_err(str::to_owned)?;
+    let operation_id = format!("rt1-{}-publication-preflight", owner.owner_id);
+    let (remote, avatar) = verified_worker::prepare_bound(
+        &operation_id,
+        &scoped.worker_endpoint,
+        &scoped.worker_token,
+        &owner.persona_id,
+        owner.persona_version,
+    )
+    .map_err(|_| "RT1_OWNER_WORKER_NOT_READY")?;
+    let providers = ProviderBundle::from_explicit_owner_profile_with_avatar(
+        &owner.owner_id,
+        &scoped.profile,
+        avatar,
+    )
+    .map_err(|_| "RT1_OWNER_PROVIDER_NOT_READY")?;
+    if providers.tts.is_none() {
+        return Err("RT1_TTS_NOT_CONFIGURED".into());
+    }
+    remote.publication_ready().map_err(|_| "RT1_OWNER_WORKER_NOT_READY".into())
 }
