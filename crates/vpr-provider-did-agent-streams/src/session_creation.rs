@@ -60,8 +60,8 @@ impl DidAgentStreamsAvatar {
         // After HTTP 201, preserve the allocated identity even if revoke races
         // the response body. The configured HTTP timeout and bounded body
         // decoder still apply. This does NOT attest remote D-ID STOP.
-        let body: CreateV2SessionResponse = decode_json_response(response, None)
-            .map_err(|error| ProviderError {
+        let body: CreateV2SessionResponse =
+            decode_json_response(response, None).map_err(|error| ProviderError {
                 kind: error.kind,
                 retryable: false,
             })?;
