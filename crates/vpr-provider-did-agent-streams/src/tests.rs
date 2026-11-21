@@ -931,7 +931,6 @@ fn cancelled_echo_open_retains_identity_when_stop_is_unconfirmed() {
     assert!(!registry.contains("echo-cancel").unwrap());
 }
 
-
 #[test]
 fn livekit_late_revoke_after_201_never_opens_private_echo_sender() {
     use std::sync::atomic::AtomicUsize;
