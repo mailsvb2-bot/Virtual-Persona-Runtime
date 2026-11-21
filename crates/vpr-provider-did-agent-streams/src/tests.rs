@@ -951,6 +951,36 @@ fn revoked_echo_registration_never_calls_private_sender() {
 }
 
 #[test]
+fn revoke_during_echo_registration_releases_reservation_without_open() {
+    use std::sync::atomic::AtomicUsize;
+
+    // First check passes, then the reservation is inserted. The second
+    // check observes revoke and must not call the private sender backend.
+    struct RevokeDuringReservation(AtomicUsize);
+    impl CancellationProbe for RevokeDuringReservation {
+        fn is_cancelled(&self) -> bool {
+            self.0.fetch_add(1, Ordering::SeqCst) >= 1
+        }
+    }
+
+    let registry = DidEchoRegistry::default();
+    let backend = MockEchoBackend::default();
+    let probe = RevokeDuringReservation(AtomicUsize::new(0));
+    let error = registry
+        .open_session(
+            &backend,
+            "revoked-during-registration",
+            "wss://unused",
+            "private",
+            &probe,
+        )
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert!(!registry.contains("revoked-during-registration").unwrap());
+    assert!(backend.calls.lock().unwrap().is_empty());
+}
+
+#[test]
 fn livekit_late_revoke_after_201_never_opens_private_echo_sender() {
     use std::sync::atomic::AtomicUsize;
 
