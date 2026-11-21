@@ -932,6 +932,43 @@ fn cancelled_echo_open_retains_identity_when_stop_is_unconfirmed() {
 }
 
 #[test]
+fn livekit_late_revoke_after_201_never_opens_private_echo_sender() {
+    use std::sync::atomic::AtomicUsize;
+
+    // create_session and create_livekit_session each check before CREATE;
+    // the third check is after the authenticated bounded response is parsed.
+    struct RevokeAfterCreate(AtomicUsize);
+    impl CancellationProbe for RevokeAfterCreate {
+        fn is_cancelled(&self) -> bool {
+            self.0.fetch_add(1, Ordering::SeqCst) >= 2
+        }
+    }
+
+    let body = r#"{"id":"echo-session-1","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        ("201 Created", body.to_owned()),
+    ]);
+    let backend = Arc::new(MockEchoBackend::default());
+    let provider = adapter(endpoint).with_echo_backend(backend.clone());
+    let error = provider
+        .create_session(&RevokeAfterCreate(AtomicUsize::new(0)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
+    assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("POST /v2/agents/agent-7/sessions ")
+    );
+    assert!(backend.calls.lock().unwrap().is_empty());
+    assert!(!provider.echo_sessions.contains("echo-session-1").unwrap());
+    // The remote V2 session might still exist: this is not STOP proof.
+}
+
+#[test]
 fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     use std::sync::Arc;
 
