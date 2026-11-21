@@ -141,7 +141,12 @@ impl Rt1OwnerEnrollments {
 }
 
 fn enrollment_digest(token: &str) -> String {
-    format!("{:x}", Sha256::digest(token.as_bytes()))
+    let digest = Sha256::digest(token.as_bytes());
+    let mut encoded = String::with_capacity(64);
+    for byte in digest {
+        write!(&mut encoded, "{byte:02x}").expect("writing to String is infallible");
+    }
+    encoded
 }
 
 #[cfg(test)]
