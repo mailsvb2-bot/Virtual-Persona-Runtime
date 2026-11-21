@@ -38,7 +38,7 @@ pub(super) fn route(
 ) -> Option<Rt1HttpResult> {
     let controller = Rt1OwnerController::new();
     let response = match path {
-        "/api/rt1/owner/register/begin" => {
+        "begin" => {
             let body: Begin = match parse_json(request) {
                 Ok(body) => body,
                 Err(response) => return Some(Err(response)),
@@ -53,7 +53,7 @@ pub(super) fn route(
                 })
                 .map_err(|_| error_response(409, "RT1_REGISTRATION_UNAVAILABLE"))
         }
-        "/api/rt1/owner/register/status" => {
+        "status" => {
             let body: EnrollmentToken = match parse_json(request) {
                 Ok(body) => body,
                 Err(response) => return Some(Err(response)),
@@ -63,7 +63,7 @@ pub(super) fn route(
                 .map(|capture| json_response(200, &capture))
                 .map_err(|_| error_response(403, "RT1_REGISTRATION_DENIED"))
         }
-        "/api/rt1/owner/register/answer" => {
+        "answer" => {
             let body: Answer = match parse_json(request) {
                 Ok(body) => body,
                 Err(response) => return Some(Err(response)),
@@ -73,7 +73,7 @@ pub(super) fn route(
                 .map(|capture| json_response(200, &capture))
                 .map_err(|_| error_response(409, "RT1_CAPTURE_ANSWER_DENIED"))
         }
-        "/api/rt1/owner/register/finish" => {
+        "finish" => {
             let body: EnrollmentToken = match parse_json(request) {
                 Ok(body) => body,
                 Err(response) => return Some(Err(response)),
@@ -83,7 +83,7 @@ pub(super) fn route(
                 .map(|capture| json_response(200, &capture))
                 .map_err(|_| error_response(409, "RT1_CAPTURE_FINISH_DENIED"))
         }
-        "/api/rt1/owner/register/approve" => {
+        "approve" => {
             let body: Approve = match parse_json(request) {
                 Ok(body) => body,
                 Err(response) => return Some(Err(response)),
@@ -93,7 +93,7 @@ pub(super) fn route(
                 .map(|capture| json_response(200, &capture))
                 .map_err(|_| error_response(409, "RT1_CAPTURE_REVIEW_DENIED"))
         }
-        "/api/rt1/owner/register/complete" => {
+        "complete" => {
             let body: EnrollmentToken = match parse_json(request) {
                 Ok(body) => body,
                 Err(response) => return Some(Err(response)),
