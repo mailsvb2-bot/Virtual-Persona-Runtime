@@ -159,7 +159,6 @@ impl Rt1WorkspaceService {
     /// Provision a second owner only from a separately reviewed canonical
     /// snapshot. No external route is permitted until private Persona capture
     /// and per-owner engine selection are fully wired.
-    #[allow(dead_code)]
     pub(crate) fn provision_verified_additional_owner(
         &self,
         reviewed: DurableReviewedOwnerContextSnapshot,

@@ -12,6 +12,8 @@ use vpr_owner_lab::{
 
 use super::{AppState, HttpResponse, error_response, json_response, parse_json};
 
+#[path = "http_rt1_enrollment.rs"]
+mod enrollment;
 #[cfg(feature = "rt1-memory-postgres")]
 #[path = "http_rt1_memory.rs"]
 mod memory;
@@ -51,8 +53,7 @@ pub(super) fn static_get_response(path: &str) -> Option<HttpResponse> {
 pub(super) struct Rt1HttpState {
     conversations: Mutex<HashMap<String, Arc<Rt1VisitorConversation>>>,
     pending_starts: Mutex<HashSet<String>>,
-    // Retained BEFORE remote CREATE, even if no browser session ID is returned.
-    // Never hold this registry lock while doing provider network I/O.
+    // Retain before CREATE; never hold this lock during provider I/O.
     remote_cleanup: Mutex<HashMap<String, Arc<Rt1RemoteMediaRevocation>>>,
     cleanup_notify: Arc<(Mutex<u64>, Condvar)>,
     transport_writers: Mutex<HashMap<String, vpr_runtime::TcpWriteRevocation>>,
@@ -168,9 +169,6 @@ fn guarded_reply(
     }
 }
 
-/// Final RT1 HTTP dispatch is owned by this module, including the actual
-/// response write. Keeping this here avoids a second path around the CSRF
-/// checks and preserves the main server's architectural module-size limit.
 pub(super) fn respond_post(request: tiny_http::Request, state: &Arc<AppState>) {
     transport::respond_post(request, state);
 }
@@ -187,11 +185,7 @@ pub(super) fn route_post(
     if let Some(response) = memory::route(path, request, state) {
         return Some(response);
     }
-    // Never serialize a visitor LLM or microphone result and then drop its
-    // authority before the HTTP writer gets the response.
     if path == "/api/rt1/visitor/start" {
-        // SDP/ICE credentials are browser egress too: a revoked owner must
-        // not receive a new sender offer after the final admission check.
         return Some(guarded_reply(visitor_start(request, state)));
     }
     if path == "/api/rt1/visitor/text" {
@@ -201,12 +195,18 @@ pub(super) fn route_post(
         return Some(guarded_reply(visitor_voice(request, state)));
     }
     if path == "/api/rt1/visitor/answer" {
-        // Successful signaling may start remote media: retain the browser
-        // delivery permit through the acknowledgement write.
         return Some(guarded_reply(visitor_answer(request, state)));
     }
     if path == "/api/rt1/visitor/ice" {
         return Some(guarded_reply(visitor_ice(request, state)));
+    }
+    if let Some(action) = path.strip_prefix("/api/rt1/owner/register/") {
+        if let Some(result) = enrollment::route(action, request) {
+            return Some(Rt1RoutedResponse {
+                response: result.unwrap_or_else(|error| error),
+                delivery: None,
+            });
+        }
     }
     let result = match path {
         "/api/rt1/owner/status" => owner_status(request),
@@ -310,8 +310,7 @@ fn owner_revoke(request: &mut tiny_http::Request, unpublish: bool) -> Rt1HttpRes
         controller.pause(&body.owner_token)
     }
     .map_err(|_| error_response(403, "RT1_OWNER_ACTION_DENIED"))?;
-    // Existing stop callbacks cannot report remote receipts to this call.
-    // A durable publication revoke is not a verified media STOP.
+    // Publication revoke alone is not an authenticated remote STOP receipt.
     Ok(json_response(
         200,
         &serde_json::json!({

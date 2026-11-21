@@ -214,6 +214,10 @@
     if (ownerBusy) return;
     ownerBusy = true;
     buttons.forEach((id) => { el(id).disabled = true; });
+    if (!visitorOnly) {
+      ["registration-begin", "registration-status", "registration-submit",
+       "registration-finish", "registration-complete"].forEach((id) => { el(id).disabled = true; });
+    }
     try {
       await task();
     } catch (error) {
@@ -222,6 +226,11 @@
       ownerBusy = false;
       buttons.forEach((id) => { el(id).disabled = false; });
       renderOwnerControls();
+      if (!visitorOnly) {
+        el("registration-begin").disabled = false;
+        el("registration-status").disabled = false;
+        renderRegistration(registrationSnapshot);
+      }
       el("copy-invite").disabled = visitorOnly || !el("invite-link").value ||
         !ownerSnapshot || ownerSnapshotToken !== el("owner-token").value.trim() ||
         ownerSnapshot.publication_status !== "published";
@@ -239,6 +248,109 @@
     if (!token) throw new Error("Введите ключ владельца.");
     return token;
   }
+
+  // Owner enrollment shares the existing CSRF and canonical owner controller.
+  // No localStorage, second account registry, or public media permissions.
+  if (visitorOnly) el("owner-registration").hidden = true;
+  let registrationSnapshot = null;
+
+  function enrollmentToken() {
+    const token = el("registration-token").value.trim();
+    if (!/^[a-fA-F0-9]{64}$/.test(token)) {
+      throw new Error("Введите действующий секрет регистрации (64 символа).");
+    }
+    return token;
+  }
+
+  function renderRegistration(snapshot) {
+    registrationSnapshot = snapshot;
+    const hasToken = /^[a-fA-F0-9]{64}$/.test(el("registration-token").value.trim());
+    const current = snapshot && snapshot.current_question;
+    const claims = Array.isArray(snapshot?.claims) ? snapshot.claims : [];
+    const reviewed = snapshot?.capture_state === "reviewed";
+    el("registration-question-label").hidden = !current;
+    el("registration-question").textContent = current ? current.prompt : "";
+    el("registration-submit").disabled = !current || !hasToken || ownerBusy;
+    el("registration-finish").disabled = !snapshot || Boolean(current) || reviewed || ownerBusy;
+    const canComplete = !current && claims.length > 0 &&
+      claims.every((claim) => claim.owner_reviewed === true) &&
+      snapshot.answered_count === snapshot.question_count;
+    el("registration-complete").disabled = !canComplete || !hasToken || ownerBusy;
+    el("registration-state").textContent = !snapshot
+      ? "Начните интервью или введите сохранённый секрет регистрации."
+      : "Persona " + snapshot.persona_id + " · ответы " +
+        snapshot.answered_count + "/" + snapshot.question_count +
+        (reviewed ? " · все утверждения подтверждены" : " · необходимо завершить проверку");
+    const container = el("registration-claims");
+    container.replaceChildren();
+    if (!snapshot || current) return;
+    for (const claim of claims) {
+      const item = document.createElement("div");
+      const statement = document.createElement("p");
+      statement.textContent = claim.statement + " (" + claim.kind + ")";
+      item.appendChild(statement);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = claim.owner_reviewed ? "Подтверждено" : "Подтвердить";
+      button.disabled = claim.owner_reviewed || ownerBusy;
+      button.addEventListener("click", () => busy(async () => {
+        const next = await api("/api/rt1/owner/register/approve", {
+          enrollment_token: enrollmentToken(), claim_id: claim.claim_id
+        });
+        renderRegistration(next);
+      }));
+      item.appendChild(button);
+      container.appendChild(item);
+    }
+  }
+
+  el("registration-token").addEventListener("input", () => renderRegistration(null));
+  el("registration-begin").addEventListener("click", () => busy(async () => {
+    const id = el("registration-persona-id").value.trim();
+    if (!id) throw new Error("Укажите название вашей Persona.");
+    const result = await api("/api/rt1/owner/register/begin", { persona_id: id });
+    el("registration-token").value = result.enrollment_token;
+    el("registration-answer").value = "";
+    renderRegistration(result.capture);
+    message("Интервью создано. Сохраните секрет регистрации.");
+  }));
+
+  el("registration-status").addEventListener("click", () => busy(async () => {
+    const capture = await api("/api/rt1/owner/register/status", {
+      enrollment_token: enrollmentToken()
+    });
+    renderRegistration(capture);
+  }));
+
+  el("registration-submit").addEventListener("click", () => busy(async () => {
+    const answer = el("registration-answer").value.trim();
+    if (!answer) throw new Error("Ответ не может быть пустым.");
+    const snapshot = await api("/api/rt1/owner/register/answer", {
+      enrollment_token: enrollmentToken(), answer
+    });
+    el("registration-answer").value = "";
+    renderRegistration(snapshot);
+  }));
+
+  el("registration-finish").addEventListener("click", () => busy(async () => {
+    const snapshot = await api("/api/rt1/owner/register/finish", {
+      enrollment_token: enrollmentToken()
+    });
+    renderRegistration(snapshot);
+    message("Проверьте и подтвердите каждое утверждение Persona.");
+  }));
+
+  el("registration-complete").addEventListener("click", () => busy(async () => {
+    const account = await api("/api/rt1/owner/register/complete", {
+      enrollment_token: enrollmentToken()
+    });
+    // Clear the one-time enrollment bearer. No secret is persisted in browser storage.
+    el("registration-token").value = "";
+    renderRegistration(null);
+    el("owner-token").value = account.owner_token;
+    await refreshOwnerStatus();
+    message("Кабинет и отдельная Persona созданы. Сохраните ключ владельца.");
+  }));
 
   el("provision").addEventListener("click", () => busy(async () => {
     const owner = await api("/api/rt1/owner/provision", {});

@@ -11,6 +11,24 @@
 <body>
 <main>
 <header><a href="/">← Owner Lab</a><h1 id="rt1-heading">Persona · RT1</h1><p id="rt1-description">Локальная проверка публикации и связи с посетителем. Диагностический WebRTC-тракт не является сгенерированным видео Persona.</p></header>
+<section id="owner-registration">
+<h2>Создать свою Persona и кабинет</h2>
+<p>Пройдите интервью, затем подтвердите каждое утверждение. Только после подтверждения сервер создаст отдельного владельца и закроет Persona для редактирования без авторизации.</p>
+<label>Название вашей Persona <input id="registration-persona-id" autocomplete="off" maxlength="128" placeholder="Например, persona-specialist-1"></label>
+<button id="registration-begin" type="button">Начать регистрацию</button>
+<label>Секрет регистрации <input id="registration-token" type="password" autocomplete="off" maxlength="64" placeholder="Сохраните для продолжения"></label>
+<button id="registration-status" type="button">Продолжить регистрацию</button>
+<p id="registration-state" role="status" aria-live="polite">Новая Persona создаётся отдельно от остальных аккаунтов.</p>
+<label id="registration-question-label" hidden>Ответ на вопрос <span id="registration-question"></span>
+<textarea id="registration-answer" rows="3" maxlength="8192"></textarea></label>
+<div class="actions">
+<button id="registration-submit" type="button" disabled>Сохранить ответ</button>
+<button id="registration-finish" type="button" disabled>Перейти к проверке утверждений</button>
+</div>
+<div id="registration-claims" aria-label="Подтверждение утверждений владельца"></div>
+<button id="registration-complete" type="button" disabled>Подтвердить и создать кабинет</button>
+<p>Ключ кабинета показывается только при завершении регистрации. Сохраните его в менеджере паролей; он не хранится в браузере.</p>
+</section>
 <section id="owner-panel">
 <h2>Владелец</h2>
 <p>Создайте доступ один раз после проверки Persona. Сохраните ключ владельца в надёжном месте — он не сохраняется в браузере.</p>
