@@ -222,6 +222,7 @@
       ownerBusy = false;
       buttons.forEach((id) => { el(id).disabled = false; });
       renderOwnerControls();
+      if (!visitorOnly) renderRegistration(registrationSnapshot);
       el("copy-invite").disabled = visitorOnly || !el("invite-link").value ||
         !ownerSnapshot || ownerSnapshotToken !== el("owner-token").value.trim() ||
         ownerSnapshot.publication_status !== "published";
