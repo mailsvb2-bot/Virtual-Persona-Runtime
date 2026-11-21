@@ -117,4 +117,50 @@ test("RT1 owner cannot publish a D-ID fixture invitation without confirmed remot
   expect((await providerRequests()).filter(
     (item) => item.method === "POST" && item.path === "/agents/backend-e2e-agent/streams",
   )).toHaveLength(0);
+
+  // Real localhost HTTP + browser journey for an independent second owner.
+  // Uses the same interview/owner/Persona runtime and no mocked endpoints.
+  await page.goto("/rt1");
+  await page.locator("#registration-persona-id").fill("canonical-owner-b");
+  await page.locator("#registration-begin").click();
+  await expect(page.locator("#registration-token")).toHaveValue(/^[a-f0-9]{64}$/);
+  for (const answer of [
+    "Это отдельная Persona владельца B",
+    "Предпочитаю точные ответы",
+    "Не смешивать чужие данные",
+  ]) {
+    await expect(page.locator("#registration-submit")).toBeEnabled();
+    await page.locator("#registration-answer").fill(answer);
+    await page.locator("#registration-submit").click();
+  }
+  await expect(page.locator("#registration-finish")).toBeEnabled();
+  await page.locator("#registration-finish").click();
+  for (let index = 0; index < 3; index += 1) {
+    const approve = page.locator("#registration-claims button:not([disabled])");
+    await expect(approve.first()).toBeVisible();
+    await approve.first().click();
+  }
+  await expect(page.locator("#registration-complete")).toBeEnabled();
+  await page.locator("#registration-complete").click();
+  await expect(page.locator("#owner-token")).toHaveValue(/^[a-f0-9]{64}$/);
+  const ownerBToken = await page.locator("#owner-token").inputValue();
+  const ownerB = await call("/api/rt1/owner/status", { owner_token: ownerBToken });
+  expect(ownerB.status).toBe(200);
+  expect(ownerB.body.persona_id).toBe("canonical-owner-b");
+  expect(ownerB.body.persona_version).toBe(2);
+  expect(ownerB.body.publication_status).toBeNull();
+
+  const ownerA = await call("/api/rt1/owner/status", { owner_token });
+  expect(ownerA.status).toBe(200);
+  expect(ownerA.body.persona_id).toBe("canonical-rt1-e2e");
+  expect(ownerA.body.owner_id).not.toBe(ownerB.body.owner_id);
+
+  // No owner-specific media credentials => owner B cannot fall back to A's
+  // shared credentials, even if the A engine is otherwise ready.
+  const blockedB = await call("/api/rt1/owner/publish", {
+    owner_token: ownerBToken,
+    expected_persona_version: 2,
+  });
+  expect(blockedB.status).toBe(503);
+  expect(blockedB.body).not.toHaveProperty("visitor_token");
 });
