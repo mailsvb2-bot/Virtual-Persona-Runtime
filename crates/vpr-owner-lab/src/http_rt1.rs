@@ -12,6 +12,8 @@ use vpr_owner_lab::{
 
 use super::{AppState, HttpResponse, error_response, json_response, parse_json};
 
+#[path = "http_rt1_enrollment.rs"]
+mod enrollment;
 #[cfg(feature = "rt1-memory-postgres")]
 #[path = "http_rt1_memory.rs"]
 mod memory;
@@ -19,8 +21,6 @@ mod memory;
 mod public_origin;
 #[path = "http_rt1_transport.rs"]
 mod transport;
-#[path = "http_rt1_enrollment.rs"]
-mod enrollment;
 
 /// This local-only diagnostic journey is not a released RT1 API.
 pub(super) fn enabled() -> bool {
@@ -185,7 +185,7 @@ pub(super) fn route_post(
     if let Some(response) = memory::route(path, request, state) {
         return Some(response);
     }
-        if path == "/api/rt1/visitor/start" {
+    if path == "/api/rt1/visitor/start" {
         return Some(guarded_reply(visitor_start(request, state)));
     }
     if path == "/api/rt1/visitor/text" {
