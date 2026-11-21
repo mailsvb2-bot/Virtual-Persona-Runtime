@@ -1,17 +1,23 @@
 //! Internal owner command boundary. Not exposed as HTTP until RT1 release entry.
 use std::sync::{Arc, OnceLock};
 
+use crate::rt1_owner_enrollment::Rt1OwnerEnrollments;
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::rt1_workspace_service::{Rt1WorkspaceService, WorkspaceStatus};
 
 // In-process owner commands must never maintain separate visitor registries:
 /// otherwise an owner pause through one controller would miss other sessions.
-static OWNER_VISITOR_RUNTIME: OnceLock<(Arc<Rt1WorkspaceService>, Arc<VisitorSessionManager>)> =
+static OWNER_VISITOR_RUNTIME: OnceLock<(
+    Arc<Rt1WorkspaceService>,
+    Arc<VisitorSessionManager>,
+    Arc<Rt1OwnerEnrollments>,
+)> =
     OnceLock::new();
 
 pub struct Rt1OwnerController {
     workspace: Arc<Rt1WorkspaceService>,
     visitors: Arc<VisitorSessionManager>,
+    enrollments: Arc<Rt1OwnerEnrollments>,
 }
 
 impl Default for Rt1OwnerController {
@@ -23,14 +29,15 @@ impl Default for Rt1OwnerController {
 impl Rt1OwnerController {
     #[must_use]
     pub fn new() -> Self {
-        let (workspace, visitors) = OWNER_VISITOR_RUNTIME.get_or_init(|| {
+        let (workspace, visitors, enrollments) = OWNER_VISITOR_RUNTIME.get_or_init(|| {
             let workspace = Arc::new(Rt1WorkspaceService::new());
             let visitors = Arc::new(VisitorSessionManager::new(Arc::clone(&workspace)));
-            (workspace, visitors)
+            (workspace, visitors, Arc::new(Rt1OwnerEnrollments::default()))
         });
         Self {
             workspace: Arc::clone(workspace),
             visitors: Arc::clone(visitors),
+            enrollments: Arc::clone(enrollments),
         }
     }
 
@@ -94,6 +101,68 @@ impl Rt1OwnerController {
         let owner = self.workspace.owner_status(owner_token)?;
         let scoped = crate::rt1_owner_provider_profile::profile_for_owner(&owner.owner_id)?;
         Ok((owner, scoped))
+    }
+
+    /// Start a private, bounded owner interview. The bearer is random and
+    /// does not grant owner/publication authority before review and commit.
+    ///
+    /// # Errors
+    /// Rejects invalid Persona names, resource exhaustion and entropy failures.
+    pub fn begin_owner_registration(
+        &self,
+        persona_id: String,
+    ) -> Result<(String, crate::OwnerCaptureSnapshot), String> {
+        self.enrollments.begin(persona_id)
+    }
+
+    /// # Errors
+    /// Denies invalid or expired enrollment credentials.
+    pub fn owner_registration_status(
+        &self,
+        token: &str,
+    ) -> Result<crate::OwnerCaptureSnapshot, String> {
+        self.enrollments.snapshot(token)
+    }
+
+    /// # Errors
+    /// Denies unauthenticated or out-of-order interview answers.
+    pub fn owner_registration_answer(
+        &self,
+        token: &str,
+        answer: String,
+    ) -> Result<crate::OwnerCaptureSnapshot, String> {
+        self.enrollments.answer(token, answer)
+    }
+
+    /// # Errors
+    /// Rejects incomplete owner interviews.
+    pub fn owner_registration_finish(
+        &self,
+        token: &str,
+    ) -> Result<crate::OwnerCaptureSnapshot, String> {
+        self.enrollments.finish(token)
+    }
+
+    /// # Errors
+    /// Rejects unreviewed or unknown captured claims.
+    pub fn owner_registration_approve(
+        &self,
+        token: &str,
+        claim_id: &str,
+    ) -> Result<crate::OwnerCaptureSnapshot, String> {
+        self.enrollments.approve(token, claim_id)
+    }
+
+    /// Commit a new owner and reviewed Persona in the ONLY canonical store.
+    ///
+    /// # Errors
+    /// Rejects incomplete reviews, duplicate Persona, unavailable storage,
+    /// or invalid enrollment credentials.
+    pub fn complete_owner_registration(
+        &self,
+        token: &str,
+    ) -> Result<(String, String), String> {
+        self.enrollments.complete(token, &self.workspace)
     }
 
     /// Share the exact in-process visitor registry with the eventual runtime.
