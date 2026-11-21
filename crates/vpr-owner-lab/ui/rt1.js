@@ -214,6 +214,10 @@
     if (ownerBusy) return;
     ownerBusy = true;
     buttons.forEach((id) => { el(id).disabled = true; });
+    if (!visitorOnly) {
+      ["registration-begin", "registration-status", "registration-submit",
+       "registration-finish", "registration-complete"].forEach((id) => { el(id).disabled = true; });
+    }
     try {
       await task();
     } catch (error) {
@@ -222,7 +226,11 @@
       ownerBusy = false;
       buttons.forEach((id) => { el(id).disabled = false; });
       renderOwnerControls();
-      if (!visitorOnly) renderRegistration(registrationSnapshot);
+      if (!visitorOnly) {
+        el("registration-begin").disabled = false;
+        el("registration-status").disabled = false;
+        renderRegistration(registrationSnapshot);
+      }
       el("copy-invite").disabled = visitorOnly || !el("invite-link").value ||
         !ownerSnapshot || ownerSnapshotToken !== el("owner-token").value.trim() ||
         ownerSnapshot.publication_status !== "published";
