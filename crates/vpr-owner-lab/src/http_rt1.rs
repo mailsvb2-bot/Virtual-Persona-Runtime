@@ -170,9 +170,6 @@ fn guarded_reply(
     }
 }
 
-/// Final RT1 HTTP dispatch is owned by this module, including the actual
-/// response write. Keeping this here avoids a second path around the CSRF
-/// checks and preserves the main server's architectural module-size limit.
 pub(super) fn respond_post(request: tiny_http::Request, state: &Arc<AppState>) {
     transport::respond_post(request, state);
 }
@@ -189,11 +186,7 @@ pub(super) fn route_post(
     if let Some(response) = memory::route(path, request, state) {
         return Some(response);
     }
-    // Never serialize a visitor LLM or microphone result and then drop its
-    // authority before the HTTP writer gets the response.
-    if path == "/api/rt1/visitor/start" {
-        // SDP/ICE credentials are browser egress too: a revoked owner must
-        // not receive a new sender offer after the final admission check.
+        if path == "/api/rt1/visitor/start" {
         return Some(guarded_reply(visitor_start(request, state)));
     }
     if path == "/api/rt1/visitor/text" {
@@ -203,8 +196,6 @@ pub(super) fn route_post(
         return Some(guarded_reply(visitor_voice(request, state)));
     }
     if path == "/api/rt1/visitor/answer" {
-        // Successful signaling may start remote media: retain the browser
-        // delivery permit through the acknowledgement write.
         return Some(guarded_reply(visitor_answer(request, state)));
     }
     if path == "/api/rt1/visitor/ice" {
