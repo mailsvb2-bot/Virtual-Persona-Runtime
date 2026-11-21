@@ -201,8 +201,8 @@ pub(super) fn route_post(
     if path == "/api/rt1/visitor/ice" {
         return Some(guarded_reply(visitor_ice(request, state)));
     }
-    if let Some(response) = enrollment::route(path, request) {
-        return Some(guarded_reply(response));
+    if let Some(action) = path.strip_prefix("/api/rt1/owner/register/") {
+        return enrollment::route(action, request).map(guarded_reply);
     }
     let result = match path {
         "/api/rt1/owner/status" => owner_status(request),
