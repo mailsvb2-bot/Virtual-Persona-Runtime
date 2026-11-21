@@ -9,6 +9,7 @@ mod persona_transaction;
 mod provider_credentials;
 mod providers;
 mod rt1_owner_controller;
+mod rt1_owner_enrollment;
 mod rt1_owner_provider_profile;
 mod rt1_remote_media_revocation;
 mod rt1_visitor_conversation;
