@@ -957,7 +957,12 @@ fn livekit_late_revoke_after_201_never_opens_private_echo_sender() {
     assert_eq!(error.kind, ProviderErrorKind::Unavailable);
     assert!(!error.retryable);
     assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
-    assert!(captured.recv().unwrap().starts_with("POST /v2/agents/agent-7/sessions "));
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("POST /v2/agents/agent-7/sessions ")
+    );
     assert!(backend.calls.lock().unwrap().is_empty());
     assert!(!provider.echo_sessions.contains("echo-session-1").unwrap());
     // The remote V2 session might still exist: this is not STOP proof.
