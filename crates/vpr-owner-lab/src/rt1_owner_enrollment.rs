@@ -143,3 +143,72 @@ impl Rt1OwnerEnrollments {
 fn enrollment_digest(token: &str) -> String {
     format!("{:x}", Sha256::digest(token.as_bytes()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parallel_owner_interviews_require_their_own_random_bearer() {
+        let enrollments = Rt1OwnerEnrollments::default();
+        let (a_token, a_start) = enrollments.begin("enrolling-owner-a".into()).unwrap();
+        let (b_token, b_start) = enrollments.begin("enrolling-owner-b".into()).unwrap();
+        assert_eq!(a_token.len(), 64);
+        assert_eq!(b_token.len(), 64);
+        assert_ne!(a_token, b_token);
+        assert_ne!(a_start.persona_id, b_start.persona_id);
+        assert!(enrollments.snapshot(&"0".repeat(64)).is_err());
+        assert!(enrollments.snapshot("bad").is_err());
+        let a_answered = enrollments
+            .answer(&a_token, "Owner A's personally reviewed answer".into())
+            .unwrap();
+        assert_eq!(a_answered.answered_count, 1);
+        let b_status = enrollments.snapshot(&b_token).unwrap();
+        assert_eq!(b_status.answered_count, 0);
+        assert_eq!(
+            enrollments.snapshot(&a_token).unwrap().answered_count,
+            1
+        );
+        assert!(enrollments.finish(&b_token).is_err());
+        assert!(enrollments.approve(&b_token, "unknown-claim").is_err());
+    }
+
+    #[test]
+    fn registration_preserves_real_capture_review_gate() {
+        let enrollments = Rt1OwnerEnrollments::default();
+        let (token, _) = enrollments.begin("reviewed-new-owner".into()).unwrap();
+        for _ in 0..20 {
+            let snapshot = enrollments.snapshot(&token).unwrap();
+            let Some(question) = snapshot.current_question else {
+                break;
+            };
+            enrollments
+                .answer(
+                    &token,
+                    format!("Owner-reviewed material for {}", question.claim_id),
+                )
+                .unwrap();
+        }
+        let finished = enrollments.finish(&token).unwrap();
+        assert!(!finished.claims.is_empty());
+        assert!(enrollments.with_capture(&token, |capture| {
+            capture.complete_initial_review().map_err(|_| "not reviewed".to_owned())
+        }).is_err());
+        for claim in finished.claims {
+            enrollments.approve(&token, &claim.claim_id).unwrap();
+        }
+        enrollments
+            .with_capture(&token, |capture| {
+                capture
+                    .complete_initial_review()
+                    .map_err(|_| "review incomplete".to_owned())?;
+                let durable = durable_snapshot_from_reviewed_profile(capture.profile())
+                    .map_err(|_| "not reviewed".to_owned())?;
+                assert_eq!(durable.persona_id, "reviewed-new-owner");
+                assert!(durable.persona_version >= 2);
+                Ok(())
+            })
+            .unwrap();
+        assert!(enrollments.snapshot(&"f".repeat(64)).is_err());
+    }
+}
