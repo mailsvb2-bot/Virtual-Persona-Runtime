@@ -32,10 +32,7 @@ struct Approve {
     claim_id: String,
 }
 
-pub(super) fn route(
-    path: &str,
-    request: &mut Request,
-) -> Option<Rt1HttpResult> {
+pub(super) fn route(path: &str, request: &mut Request) -> Option<Rt1HttpResult> {
     let controller = Rt1OwnerController::new();
     let response = match path {
         "begin" => {
@@ -46,10 +43,13 @@ pub(super) fn route(
             controller
                 .begin_owner_registration(body.persona_id)
                 .map(|(enrollment_token, capture)| {
-                    json_response(201, &serde_json::json!({
-                        "enrollment_token": enrollment_token,
-                        "capture": capture,
-                    }))
+                    json_response(
+                        201,
+                        &serde_json::json!({
+                            "enrollment_token": enrollment_token,
+                            "capture": capture,
+                        }),
+                    )
                 })
                 .map_err(|_| error_response(409, "RT1_REGISTRATION_UNAVAILABLE"))
         }
@@ -101,11 +101,14 @@ pub(super) fn route(
             controller
                 .complete_owner_registration(&body.enrollment_token)
                 .map(|(owner_id, owner_token)| {
-                    json_response(201, &serde_json::json!({
-                        "owner_id": owner_id,
-                        "owner_token": owner_token,
-                        "publication_status": "private",
-                    }))
+                    json_response(
+                        201,
+                        &serde_json::json!({
+                            "owner_id": owner_id,
+                            "owner_token": owner_token,
+                            "publication_status": "private",
+                        }),
+                    )
                 })
                 .map_err(|_| error_response(409, "RT1_REGISTRATION_INCOMPLETE"))
         }
