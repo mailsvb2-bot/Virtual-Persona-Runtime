@@ -11,8 +11,7 @@ static OWNER_VISITOR_RUNTIME: OnceLock<(
     Arc<Rt1WorkspaceService>,
     Arc<VisitorSessionManager>,
     Arc<Rt1OwnerEnrollments>,
-)> =
-    OnceLock::new();
+)> = OnceLock::new();
 
 pub struct Rt1OwnerController {
     workspace: Arc<Rt1WorkspaceService>,
@@ -32,7 +31,11 @@ impl Rt1OwnerController {
         let (workspace, visitors, enrollments) = OWNER_VISITOR_RUNTIME.get_or_init(|| {
             let workspace = Arc::new(Rt1WorkspaceService::new());
             let visitors = Arc::new(VisitorSessionManager::new(Arc::clone(&workspace)));
-            (workspace, visitors, Arc::new(Rt1OwnerEnrollments::default()))
+            (
+                workspace,
+                visitors,
+                Arc::new(Rt1OwnerEnrollments::default()),
+            )
         });
         Self {
             workspace: Arc::clone(workspace),
@@ -158,10 +161,7 @@ impl Rt1OwnerController {
     /// # Errors
     /// Rejects incomplete reviews, duplicate Persona, unavailable storage,
     /// or invalid enrollment credentials.
-    pub fn complete_owner_registration(
-        &self,
-        token: &str,
-    ) -> Result<(String, String), String> {
+    pub fn complete_owner_registration(&self, token: &str) -> Result<(String, String), String> {
         self.enrollments.complete(token, &self.workspace)
     }
 
