@@ -19,6 +19,8 @@ mod memory;
 mod public_origin;
 #[path = "http_rt1_transport.rs"]
 mod transport;
+#[path = "http_rt1_enrollment.rs"]
+mod enrollment;
 
 /// This local-only diagnostic journey is not a released RT1 API.
 pub(super) fn enabled() -> bool {
@@ -207,6 +209,9 @@ pub(super) fn route_post(
     }
     if path == "/api/rt1/visitor/ice" {
         return Some(guarded_reply(visitor_ice(request, state)));
+    }
+    if let Some(response) = enrollment::route(path, request) {
+        return Some(guarded_reply(response));
     }
     let result = match path {
         "/api/rt1/owner/status" => owner_status(request),
