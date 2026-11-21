@@ -263,7 +263,10 @@
     el("registration-question").textContent = current ? current.prompt : "";
     el("registration-submit").disabled = !current || !hasToken || ownerBusy;
     el("registration-finish").disabled = !snapshot || Boolean(current) || reviewed || ownerBusy;
-    el("registration-complete").disabled = !reviewed || !hasToken || ownerBusy;
+    const canComplete = !current && claims.length > 0 &&
+      claims.every((claim) => claim.owner_reviewed === true) &&
+      snapshot.answered_count === snapshot.question_count;
+    el("registration-complete").disabled = !canComplete || !hasToken || ownerBusy;
     el("registration-state").textContent = !snapshot
       ? "Начните интервью или введите сохранённый секрет регистрации."
       : "Persona " + snapshot.persona_id + " · ответы " +
