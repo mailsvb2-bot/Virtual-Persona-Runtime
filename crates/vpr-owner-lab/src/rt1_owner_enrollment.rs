@@ -125,7 +125,7 @@ impl Rt1OwnerEnrollments {
         token: &str,
         workspace: &Rt1WorkspaceService,
     ) -> Result<(String, String), String> {
-        self.with_capture(token, |capture| {
+        let account = self.with_capture(token, |capture| {
             if capture.snapshot().capture_state != "reviewed" {
                 capture
                     .complete_initial_review()
@@ -134,11 +134,9 @@ impl Rt1OwnerEnrollments {
             let reviewed = durable_snapshot_from_reviewed_profile(capture.profile())
                 .map_err(|_| "RT1_CAPTURE_REVIEW_INCOMPLETE")?;
             workspace.provision_verified_additional_owner(reviewed)
-        })
-        .map(|account| {
-            self.pending.lock().remove(&enrollment_digest(token));
-            account
-        })
+        })?;
+        self.pending.lock().remove(&enrollment_digest(token));
+        Ok(account)
     }
 }
 
