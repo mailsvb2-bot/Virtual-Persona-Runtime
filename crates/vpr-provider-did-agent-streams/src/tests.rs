@@ -932,6 +932,25 @@ fn cancelled_echo_open_retains_identity_when_stop_is_unconfirmed() {
 }
 
 #[test]
+fn revoked_echo_registration_never_calls_private_sender() {
+    let registry = DidEchoRegistry::default();
+    let backend = MockEchoBackend::default();
+    let probe = Probe(AtomicBool::new(true));
+    let error = registry
+        .open_session(
+            &backend,
+            "revoked-before-registration",
+            "wss://unused",
+            "private",
+            &probe,
+        )
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert!(!registry.contains("revoked-before-registration").unwrap());
+    assert!(backend.calls.lock().unwrap().is_empty());
+}
+
+#[test]
 fn livekit_late_revoke_after_201_never_opens_private_echo_sender() {
     use std::sync::atomic::AtomicUsize;
 
