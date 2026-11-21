@@ -35,7 +35,9 @@ impl Rt1OwnerEnrollments {
         action: impl FnOnce(&mut Rt0OwnerCapture) -> Result<T, String>,
     ) -> Result<T, String> {
         if enrollment_token.len() != 64
-            || !enrollment_token.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !enrollment_token
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
         {
             return Err("RT1_ENROLLMENT_DENIED".into());
         }
@@ -170,10 +172,7 @@ mod tests {
         assert_eq!(a_answered.answered_count, 1);
         let b_status = enrollments.snapshot(&b_token).unwrap();
         assert_eq!(b_status.answered_count, 0);
-        assert_eq!(
-            enrollments.snapshot(&a_token).unwrap().answered_count,
-            1
-        );
+        assert_eq!(enrollments.snapshot(&a_token).unwrap().answered_count, 1);
         assert!(enrollments.finish(&b_token).is_err());
         assert!(enrollments.approve(&b_token, "unknown-claim").is_err());
     }
@@ -196,9 +195,15 @@ mod tests {
         }
         let finished = enrollments.finish(&token).unwrap();
         assert!(!finished.claims.is_empty());
-        assert!(enrollments.with_capture(&token, |capture| {
-            capture.complete_initial_review().map_err(|_| "not reviewed".to_owned())
-        }).is_err());
+        assert!(
+            enrollments
+                .with_capture(&token, |capture| {
+                    capture
+                        .complete_initial_review()
+                        .map_err(|_| "not reviewed".to_owned())
+                })
+                .is_err()
+        );
         for claim in finished.claims {
             enrollments.approve(&token, &claim.claim_id).unwrap();
         }
