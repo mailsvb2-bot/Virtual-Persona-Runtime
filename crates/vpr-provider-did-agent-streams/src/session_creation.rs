@@ -57,7 +57,10 @@ impl DidAgentStreamsAvatar {
             return Err(invalid_response());
         }
 
-        // After HTTP 201, preserve the allocated identity even if revoke races\n        // the response body. The configured HTTP timeout and bounded body\n        // decoder still apply. This does NOT attest remote D-ID STOP.\n        let body: CreateV2SessionResponse = decode_json_response(response, None)
+        // After HTTP 201, preserve the allocated identity even if revoke races
+        // the response body. The configured HTTP timeout and bounded body
+        // decoder still apply. This does NOT attest remote D-ID STOP.
+        let body: CreateV2SessionResponse = decode_json_response(response, None)
             .map_err(|error| ProviderError {
                 kind: error.kind,
                 retryable: false,
@@ -75,7 +78,14 @@ impl DidAgentStreamsAvatar {
                     kind: error.kind,
                     retryable: false,
                 })?;
-        // A late revoke must never open a new private sender or expose a\n        // viewer grant. Remote V2 STOP remains unconfirmed, so fail closed\n        // as unavailable (not a safely compensated cancellation).\n        if cancellation.is_cancelled() {\n            return Err(unavailable());\n        }\n        self.echo_sessions\n            .open_session(
+        // A late revoke must never open a new private sender or expose a
+        // viewer grant. Remote V2 STOP remains unconfirmed, so fail closed
+        // as unavailable (not a safely compensated cancellation).
+        if cancellation.is_cancelled() {
+            return Err(ProviderError { kind: ProviderErrorKind::Unavailable, retryable: false });
+        }
+        self.echo_sessions
+            .open_session(
                 backend.as_ref(),
                 &session.provider_session_id,
                 &session_url,
