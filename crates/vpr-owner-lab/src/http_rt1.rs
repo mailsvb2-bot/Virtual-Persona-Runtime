@@ -53,8 +53,7 @@ pub(super) fn static_get_response(path: &str) -> Option<HttpResponse> {
 pub(super) struct Rt1HttpState {
     conversations: Mutex<HashMap<String, Arc<Rt1VisitorConversation>>>,
     pending_starts: Mutex<HashSet<String>>,
-    // Retained BEFORE remote CREATE, even if no browser session ID is returned.
-    // Never hold this registry lock while doing provider network I/O.
+    // Retain before CREATE; never hold this lock during provider I/O.
     remote_cleanup: Mutex<HashMap<String, Arc<Rt1RemoteMediaRevocation>>>,
     cleanup_notify: Arc<(Mutex<u64>, Condvar)>,
     transport_writers: Mutex<HashMap<String, vpr_runtime::TcpWriteRevocation>>,
@@ -311,8 +310,7 @@ fn owner_revoke(request: &mut tiny_http::Request, unpublish: bool) -> Rt1HttpRes
         controller.pause(&body.owner_token)
     }
     .map_err(|_| error_response(403, "RT1_OWNER_ACTION_DENIED"))?;
-    // Existing stop callbacks cannot report remote receipts to this call.
-    // A durable publication revoke is not a verified media STOP.
+    // Publication revoke alone is not an authenticated remote STOP receipt.
     Ok(json_response(
         200,
         &serde_json::json!({
