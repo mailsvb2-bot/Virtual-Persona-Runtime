@@ -82,7 +82,10 @@ impl DidAgentStreamsAvatar {
         // viewer grant. Remote V2 STOP remains unconfirmed, so fail closed
         // as unavailable (not a safely compensated cancellation).
         if cancellation.is_cancelled() {
-            return Err(ProviderError { kind: ProviderErrorKind::Unavailable, retryable: false });
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Unavailable,
+                retryable: false,
+            });
         }
         self.echo_sessions
             .open_session(
