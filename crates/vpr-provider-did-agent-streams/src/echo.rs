@@ -132,6 +132,13 @@ impl DidEchoRegistry {
             return Err(super::cancelled());
         }
         self.insert(id)?;
+        // A revoke can land while the identity reservation lock is acquired.
+        // No private transport exists yet, so release this reservation and
+        // deny without invoking the backend on that path.
+        if cancellation.is_cancelled() {
+            self.remove(id)?;
+            return Err(super::cancelled());
+        }
         if let Err(error) = backend.open(id, url, echo_token, cancellation) {
             // Concrete workers may fail before a sender is ever registered.
             // Release that reservation only when the existing worker map
