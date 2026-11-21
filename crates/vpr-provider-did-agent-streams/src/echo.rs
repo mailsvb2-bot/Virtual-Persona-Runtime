@@ -125,6 +125,12 @@ impl DidEchoRegistry {
         echo_token: &str,
         cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
+        // Recheck at the registry boundary: revocation can race the caller's
+        // final CREATE check, and a revoked visitor must not reserve or open
+        // another private Echo sender. The backend checks cancellation too.
+        if cancellation.is_cancelled() {
+            return Err(super::cancelled());
+        }
         self.insert(id)?;
         if let Err(error) = backend.open(id, url, echo_token, cancellation) {
             // Concrete workers may fail before a sender is ever registered.
