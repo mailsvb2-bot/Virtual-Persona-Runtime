@@ -860,6 +860,63 @@ fn failed_echo_open_without_worker_releases_reservation_after_each_attempt() {
     assert!(registry.contains("later-real-sender").unwrap());
 }
 
+struct UncertainEchoOpen {
+    calls: std::sync::Mutex<Vec<&'static str>>,
+    fail_stop_once: AtomicBool,
+}
+
+impl DidEchoBackend for UncertainEchoOpen {
+    fn open(
+        &self,
+        _id: &str,
+        _url: &str,
+        _token: &str,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        Err(unavailable())
+    }
+
+    fn speak(
+        &self,
+        _id: &str,
+        _text: &str,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        Err(unavailable())
+    }
+
+    fn sender_definitely_absent(&self, _id: &str) -> Result<bool, ProviderError> {
+        Err(unavailable())
+    }
+
+    fn stop(&self, _id: &str) -> Result<(), ProviderError> {
+        self.calls.lock().unwrap().push("stop");
+        if self.fail_stop_once.swap(false, Ordering::SeqCst) {
+            Err(unavailable())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn failed_echo_open_with_unknown_worker_state_attempts_stop_and_retains_retry_id() {
+    let registry = DidEchoRegistry::default();
+    let backend = UncertainEchoOpen {
+        calls: std::sync::Mutex::new(Vec::new()),
+        fail_stop_once: AtomicBool::new(true),
+    };
+    let probe = Probe(AtomicBool::new(false));
+    assert!(registry
+        .open_session(&backend, "uncertain-open", "wss://unused", "private", &probe)
+        .is_err());
+    assert_eq!(*backend.calls.lock().unwrap(), vec!["stop"]);
+    assert!(registry.contains("uncertain-open").unwrap());
+    registry.close_session(&backend, "uncertain-open").unwrap();
+    assert_eq!(*backend.calls.lock().unwrap(), vec!["stop", "stop"]);
+    assert!(!registry.contains("uncertain-open").unwrap());
+}
+
 #[test]
 fn echo_unconfirmed_stop_preserves_sender_identity_until_confirmed_retry() {
     let registry = DidEchoRegistry::default();
