@@ -1078,7 +1078,12 @@ fn livekit_revoke_after_private_open_closes_sender_before_viewer_grant() {
     assert_eq!(error.kind, ProviderErrorKind::Unavailable);
     assert!(!error.retryable);
     assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
-    assert!(captured.recv().unwrap().starts_with("POST /v2/agents/agent-7/sessions "));
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("POST /v2/agents/agent-7/sessions ")
+    );
     assert_eq!(*backend.inner.calls.lock().unwrap(), vec!["open", "stop"]);
     assert!(!provider.echo_sessions.contains("echo-session-1").unwrap());
     // This proves local private Echo cleanup, not remote D-ID video/audio STOP.
