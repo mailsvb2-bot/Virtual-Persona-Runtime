@@ -1,5 +1,5 @@
-use std::collections::HashSet;
-use std::sync::Mutex;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, Weak};
 
 use vpr_integration::{CancellationProbe, ProviderError, RealtimeAvatarPcmStream};
 
@@ -110,6 +110,10 @@ pub trait DidEchoBackend: Send + Sync {
 #[derive(Default)]
 pub(crate) struct DidEchoRegistry {
     sessions: Mutex<HashSet<String>>,
+    // Weak entries avoid retaining a lock per historical sender indefinitely.
+    // Only the same session ID is serialized; a stalled STOP cannot hold the
+    // registry-wide session lock or block another session's teardown.
+    stop_locks: Mutex<HashMap<String, Weak<Mutex<()>>>>,
 }
 
 impl DidEchoRegistry {
@@ -195,11 +199,31 @@ impl DidEchoRegistry {
         backend: &dyn DidEchoBackend,
         id: &str,
     ) -> Result<(), ProviderError> {
+        let stop_lock = {
+            let mut locks = self
+                .stop_locks
+                .lock()
+                .map_err(|_| super::invalid_response())?;
+            // Bound the map to currently active callers, not historical IDs.
+            locks.retain(|_, weak| weak.strong_count() > 0);
+            if let Some(existing) = locks.get(id).and_then(Weak::upgrade) {
+                existing
+            } else {
+                let fresh = Arc::new(Mutex::new(()));
+                locks.insert(id.to_owned(), Arc::downgrade(&fresh));
+                fresh
+            }
+        };
+        let _stop_guard = stop_lock
+            .lock()
+            .map_err(|_| super::invalid_response())?;
+        // Recheck AFTER acquiring the per-session lock: a concurrent caller
+        // may already have received STOP, forgotten and removed this sender.
         if !self.contains(id)? {
             return Ok(());
         }
-        // If STOP is unconfirmed, retain the only known sender identity:
-        // forgetting it would make follow-up cleanup impossible.
+        // Failed or uncertain STOP keeps the identity for a later retry.
+        // Never hold the global registry lock across provider network I/O.
         backend.stop(id)?;
         backend.forget(id)?;
         self.remove(id)
