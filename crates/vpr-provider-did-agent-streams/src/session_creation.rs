@@ -99,6 +99,17 @@ impl DidAgentStreamsAvatar {
                 kind: error.kind,
                 retryable: false,
             })?;
+        // OPEN can finish just before revoke. Fence the private sender again
+        // before handing the viewer its grant. A failed local STOP retains the
+        // registry identity for retry; it does not prove remote D-ID RTP STOP.
+        if cancellation.is_cancelled() {
+            self.echo_sessions
+                .close_session(backend.as_ref(), &session.provider_session_id)?;
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Unavailable,
+                retryable: false,
+            });
+        }
         Ok(session)
     }
 }
