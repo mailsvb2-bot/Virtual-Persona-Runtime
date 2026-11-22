@@ -1018,6 +1018,73 @@ fn livekit_late_revoke_after_201_never_opens_private_echo_sender() {
 }
 
 #[test]
+fn livekit_revoke_after_private_open_closes_sender_before_viewer_grant() {
+    use std::sync::atomic::AtomicUsize;
+
+    struct RevokeAfterOpen {
+        opened: AtomicBool,
+        checks_after_open: AtomicUsize,
+    }
+    impl CancellationProbe for RevokeAfterOpen {
+        fn is_cancelled(&self) -> bool {
+            self.opened.load(Ordering::SeqCst)
+                && self.checks_after_open.fetch_add(1, Ordering::SeqCst) >= 1
+        }
+    }
+    struct OpeningEcho {
+        probe: Arc<RevokeAfterOpen>,
+        inner: MockEchoBackend,
+    }
+    impl DidEchoBackend for OpeningEcho {
+        fn open(
+            &self,
+            id: &str,
+            url: &str,
+            token: &str,
+            cancellation: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            self.inner.open(id, url, token, cancellation)?;
+            self.probe.opened.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        fn speak(
+            &self,
+            id: &str,
+            text: &str,
+            cancellation: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            self.inner.speak(id, text, cancellation)
+        }
+        fn stop(&self, id: &str) -> Result<(), ProviderError> {
+            self.inner.stop(id)
+        }
+    }
+
+    let body = r#"{"id":"echo-session-1","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        ("201 Created", body.to_owned()),
+    ]);
+    let probe = Arc::new(RevokeAfterOpen {
+        opened: AtomicBool::new(false),
+        checks_after_open: AtomicUsize::new(0),
+    });
+    let backend = Arc::new(OpeningEcho {
+        probe: probe.clone(),
+        inner: MockEchoBackend::default(),
+    });
+    let provider = adapter(endpoint).with_echo_backend(backend.clone());
+    let error = provider.create_session(probe.as_ref()).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
+    assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
+    assert!(captured.recv().unwrap().starts_with("POST /v2/agents/agent-7/sessions "));
+    assert_eq!(*backend.inner.calls.lock().unwrap(), vec!["open", "stop"]);
+    assert!(!provider.echo_sessions.contains("echo-session-1").unwrap());
+    // This proves local private Echo cleanup, not remote D-ID video/audio STOP.
+}
+
+#[test]
 fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     use std::sync::Arc;
 
