@@ -860,6 +860,71 @@ fn failed_echo_open_without_worker_releases_reservation_after_each_attempt() {
     assert!(registry.contains("later-real-sender").unwrap());
 }
 
+struct UncertainEchoOpen {
+    calls: std::sync::Mutex<Vec<&'static str>>,
+    fail_stop_once: AtomicBool,
+}
+
+impl DidEchoBackend for UncertainEchoOpen {
+    fn open(
+        &self,
+        _id: &str,
+        _url: &str,
+        _token: &str,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        Err(unavailable())
+    }
+
+    fn speak(
+        &self,
+        _id: &str,
+        _text: &str,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        Err(unavailable())
+    }
+
+    fn sender_definitely_absent(&self, _id: &str) -> Result<bool, ProviderError> {
+        Err(unavailable())
+    }
+
+    fn stop(&self, _id: &str) -> Result<(), ProviderError> {
+        self.calls.lock().unwrap().push("stop");
+        if self.fail_stop_once.swap(false, Ordering::SeqCst) {
+            Err(unavailable())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn failed_echo_open_with_unknown_worker_state_attempts_stop_and_retains_retry_id() {
+    let registry = DidEchoRegistry::default();
+    let backend = UncertainEchoOpen {
+        calls: std::sync::Mutex::new(Vec::new()),
+        fail_stop_once: AtomicBool::new(true),
+    };
+    let probe = Probe(AtomicBool::new(false));
+    assert!(
+        registry
+            .open_session(
+                &backend,
+                "uncertain-open",
+                "wss://unused",
+                "private",
+                &probe
+            )
+            .is_err()
+    );
+    assert_eq!(*backend.calls.lock().unwrap(), vec!["stop"]);
+    assert!(registry.contains("uncertain-open").unwrap());
+    registry.close_session(&backend, "uncertain-open").unwrap();
+    assert_eq!(*backend.calls.lock().unwrap(), vec!["stop", "stop"]);
+    assert!(!registry.contains("uncertain-open").unwrap());
+}
+
 #[test]
 fn echo_unconfirmed_stop_preserves_sender_identity_until_confirmed_retry() {
     let registry = DidEchoRegistry::default();
@@ -929,6 +994,164 @@ fn cancelled_echo_open_retains_identity_when_stop_is_unconfirmed() {
     assert_eq!(*backend.transport.calls.lock().unwrap(), vec!["stop"]);
     registry.close_session(&backend, "echo-cancel").unwrap();
     assert!(!registry.contains("echo-cancel").unwrap());
+}
+
+#[test]
+fn revoked_echo_registration_never_calls_private_sender() {
+    let registry = DidEchoRegistry::default();
+    let backend = MockEchoBackend::default();
+    let probe = Probe(AtomicBool::new(true));
+    let error = registry
+        .open_session(
+            &backend,
+            "revoked-before-registration",
+            "wss://unused",
+            "private",
+            &probe,
+        )
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert!(!registry.contains("revoked-before-registration").unwrap());
+    assert!(backend.calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn revoke_during_echo_registration_releases_reservation_without_open() {
+    use std::sync::atomic::AtomicUsize;
+
+    // First check passes, then the reservation is inserted. The second
+    // check observes revoke and must not call the private sender backend.
+    struct RevokeDuringReservation(AtomicUsize);
+    impl CancellationProbe for RevokeDuringReservation {
+        fn is_cancelled(&self) -> bool {
+            self.0.fetch_add(1, Ordering::SeqCst) >= 1
+        }
+    }
+
+    let registry = DidEchoRegistry::default();
+    let backend = MockEchoBackend::default();
+    let probe = RevokeDuringReservation(AtomicUsize::new(0));
+    let error = registry
+        .open_session(
+            &backend,
+            "revoked-during-registration",
+            "wss://unused",
+            "private",
+            &probe,
+        )
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert!(!registry.contains("revoked-during-registration").unwrap());
+    assert!(backend.calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn livekit_late_revoke_after_201_never_opens_private_echo_sender() {
+    use std::sync::atomic::AtomicUsize;
+
+    // create_session and create_livekit_session each check before CREATE;
+    // the third check is after the authenticated bounded response is parsed.
+    struct RevokeAfterCreate(AtomicUsize);
+    impl CancellationProbe for RevokeAfterCreate {
+        fn is_cancelled(&self) -> bool {
+            self.0.fetch_add(1, Ordering::SeqCst) >= 2
+        }
+    }
+
+    let body = r#"{"id":"echo-session-1","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        ("201 Created", body.to_owned()),
+    ]);
+    let backend = Arc::new(MockEchoBackend::default());
+    let provider = adapter(endpoint).with_echo_backend(backend.clone());
+    let error = provider
+        .create_session(&RevokeAfterCreate(AtomicUsize::new(0)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
+    assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("POST /v2/agents/agent-7/sessions ")
+    );
+    assert!(backend.calls.lock().unwrap().is_empty());
+    assert!(!provider.echo_sessions.contains("echo-session-1").unwrap());
+    // The remote V2 session might still exist: this is not STOP proof.
+}
+
+#[test]
+fn livekit_revoke_after_private_open_closes_sender_before_viewer_grant() {
+    use std::sync::atomic::AtomicUsize;
+
+    struct RevokeAfterOpen {
+        opened: AtomicBool,
+        checks_after_open: AtomicUsize,
+    }
+    impl CancellationProbe for RevokeAfterOpen {
+        fn is_cancelled(&self) -> bool {
+            self.opened.load(Ordering::SeqCst)
+                && self.checks_after_open.fetch_add(1, Ordering::SeqCst) >= 1
+        }
+    }
+    struct OpeningEcho {
+        probe: Arc<RevokeAfterOpen>,
+        inner: MockEchoBackend,
+    }
+    impl DidEchoBackend for OpeningEcho {
+        fn open(
+            &self,
+            id: &str,
+            url: &str,
+            token: &str,
+            cancellation: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            self.inner.open(id, url, token, cancellation)?;
+            self.probe.opened.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        fn speak(
+            &self,
+            id: &str,
+            text: &str,
+            cancellation: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            self.inner.speak(id, text, cancellation)
+        }
+        fn stop(&self, id: &str) -> Result<(), ProviderError> {
+            self.inner.stop(id)
+        }
+    }
+
+    let body = r#"{"id":"echo-session-1","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        ("201 Created", body.to_owned()),
+    ]);
+    let probe = Arc::new(RevokeAfterOpen {
+        opened: AtomicBool::new(false),
+        checks_after_open: AtomicUsize::new(0),
+    });
+    let backend = Arc::new(OpeningEcho {
+        probe: probe.clone(),
+        inner: MockEchoBackend::default(),
+    });
+    let provider = adapter(endpoint).with_echo_backend(backend.clone());
+    let error = provider.create_session(probe.as_ref()).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
+    assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("POST /v2/agents/agent-7/sessions ")
+    );
+    assert_eq!(*backend.inner.calls.lock().unwrap(), vec!["open", "stop"]);
+    assert!(!provider.echo_sessions.contains("echo-session-1").unwrap());
+    // This proves local private Echo cleanup, not remote D-ID video/audio STOP.
 }
 
 #[test]

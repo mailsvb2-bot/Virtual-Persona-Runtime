@@ -125,12 +125,28 @@ impl DidEchoRegistry {
         echo_token: &str,
         cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
+        // Recheck at the registry boundary: revocation can race the caller's
+        // final CREATE check, and a revoked visitor must not reserve or open
+        // another private Echo sender. The backend checks cancellation too.
+        if cancellation.is_cancelled() {
+            return Err(super::cancelled());
+        }
         self.insert(id)?;
+        // A revoke can land while the identity reservation lock is acquired.
+        // No private transport exists yet, so release this reservation and
+        // deny without invoking the backend on that path.
+        if cancellation.is_cancelled() {
+            self.remove(id)?;
+            return Err(super::cancelled());
+        }
         if let Err(error) = backend.open(id, url, echo_token, cancellation) {
             // Concrete workers may fail before a sender is ever registered.
             // Release that reservation only when the existing worker map
             // proves absence; otherwise retain the STOP identity on failure.
-            if backend.sender_definitely_absent(id)? {
+            // An unavailable worker registry is NOT proof that OPEN created no
+            // sender. Attempt bounded STOP even when the absence probe fails;
+            // retain the identity if STOP cannot be confirmed.
+            if matches!(backend.sender_definitely_absent(id), Ok(true)) {
                 self.remove(id)?;
             } else {
                 let _ = self.close_session(backend, id);
