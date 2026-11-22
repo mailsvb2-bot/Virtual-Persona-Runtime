@@ -143,7 +143,10 @@ impl DidEchoRegistry {
             // Concrete workers may fail before a sender is ever registered.
             // Release that reservation only when the existing worker map
             // proves absence; otherwise retain the STOP identity on failure.
-            if backend.sender_definitely_absent(id)? {
+            // An unavailable worker registry is NOT proof that OPEN created no
+            // sender. Attempt bounded STOP even when the absence probe fails;
+            // retain the identity if STOP cannot be confirmed.
+            if matches!(backend.sender_definitely_absent(id), Ok(true)) {
                 self.remove(id)?;
             } else {
                 let _ = self.close_session(backend, id);
