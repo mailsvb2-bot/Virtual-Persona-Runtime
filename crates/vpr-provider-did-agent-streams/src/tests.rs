@@ -1717,3 +1717,105 @@ fn ambiguous_v2_create_server_failure_is_not_marked_retryable() {
     let _ = captured.recv().unwrap();
     assert!(captured.try_recv().is_err());
 }
+
+#[test]
+fn concurrent_echo_close_stops_each_sender_once() {
+    use std::sync::{Arc, Barrier};
+    use std::time::Duration;
+
+    struct SlowStop {
+        stops: std::sync::atomic::AtomicUsize,
+    }
+    impl DidEchoBackend for SlowStop {
+        fn open(&self, _: &str, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Err(unavailable())
+        }
+        fn stop(&self, _: &str) -> Result<(), ProviderError> {
+            self.stops.fetch_add(1, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(30));
+            Ok(())
+        }
+    }
+
+    let registry = Arc::new(DidEchoRegistry::default());
+    let backend = Arc::new(SlowStop {
+        stops: std::sync::atomic::AtomicUsize::new(0),
+    });
+    registry.insert("same-sender").unwrap();
+    let barrier = Arc::new(Barrier::new(9));
+    let workers: Vec<_> = (0..8).map(|_| {
+        let registry = Arc::clone(&registry);
+        let backend = Arc::clone(&backend);
+        let barrier = Arc::clone(&barrier);
+        thread::spawn(move || {
+            barrier.wait();
+            registry.close_session(backend.as_ref(), "same-sender").unwrap();
+        })
+    }).collect();
+    barrier.wait();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+    assert_eq!(backend.stops.load(Ordering::SeqCst), 1);
+    assert!(!registry.contains("same-sender").unwrap());
+}
+
+#[test]
+fn blocked_echo_stop_does_not_block_another_sender() {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    struct BlockingStop {
+        started: mpsc::Sender<()>,
+        release: std::sync::Mutex<mpsc::Receiver<()>>,
+    }
+    impl DidEchoBackend for BlockingStop {
+        fn open(&self, _: &str, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Err(unavailable())
+        }
+        fn stop(&self, id: &str) -> Result<(), ProviderError> {
+            if id == "blocked" {
+                self.started.send(()).unwrap();
+                self.release.lock().unwrap().recv_timeout(Duration::from_secs(3)).unwrap();
+            }
+            Ok(())
+        }
+    }
+
+    let registry = Arc::new(DidEchoRegistry::default());
+    registry.insert("blocked").unwrap();
+    registry.insert("independent").unwrap();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let backend = Arc::new(BlockingStop {
+        started: started_tx,
+        release: std::sync::Mutex::new(release_rx),
+    });
+    let blocked_registry = Arc::clone(&registry);
+    let blocked_backend = Arc::clone(&backend);
+    let blocked = thread::spawn(move || {
+        blocked_registry.close_session(blocked_backend.as_ref(), "blocked")
+    });
+    started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+    let independent_registry = Arc::clone(&registry);
+    let independent_backend = Arc::clone(&backend);
+    let (done_tx, done_rx) = mpsc::channel();
+    let independent = thread::spawn(move || {
+        let result = independent_registry.close_session(independent_backend.as_ref(), "independent");
+        done_tx.send(result).unwrap();
+    });
+    let independent_result = done_rx.recv_timeout(Duration::from_secs(2));
+    release_tx.send(()).unwrap();
+    blocked.join().unwrap().unwrap();
+    independent.join().unwrap();
+    independent_result.expect("independent STOP blocked by unrelated sender").unwrap();
+    assert!(!registry.contains("blocked").unwrap());
+    assert!(!registry.contains("independent").unwrap());
+}
