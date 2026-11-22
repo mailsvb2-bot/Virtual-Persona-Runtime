@@ -907,9 +907,17 @@ fn failed_echo_open_with_unknown_worker_state_attempts_stop_and_retains_retry_id
         fail_stop_once: AtomicBool::new(true),
     };
     let probe = Probe(AtomicBool::new(false));
-    assert!(registry
-        .open_session(&backend, "uncertain-open", "wss://unused", "private", &probe)
-        .is_err());
+    assert!(
+        registry
+            .open_session(
+                &backend,
+                "uncertain-open",
+                "wss://unused",
+                "private",
+                &probe
+            )
+            .is_err()
+    );
     assert_eq!(*backend.calls.lock().unwrap(), vec!["stop"]);
     assert!(registry.contains("uncertain-open").unwrap());
     registry.close_session(&backend, "uncertain-open").unwrap();
