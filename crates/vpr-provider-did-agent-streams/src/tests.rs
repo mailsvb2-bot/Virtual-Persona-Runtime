@@ -2058,3 +2058,95 @@ fn echo_stop_waits_for_in_flight_private_open_before_forgetting_sender() {
     assert_eq!(backend.stops.load(Ordering::SeqCst), 1);
     assert!(!registry.contains("opening-sender").unwrap());
 }
+
+
+#[test]
+fn echo_pcm_open_revoked_by_backend_aborts_stream_and_denies_handoff() {
+    use std::sync::Arc;
+
+    struct SharedProbe(Arc<AtomicBool>);
+    impl CancellationProbe for SharedProbe {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+
+    struct PendingStream(Arc<AtomicBool>);
+    impl RealtimeAvatarPcmStream for PendingStream {
+        fn push_pcm(
+            &mut self,
+            _: &[u8],
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn finish(&mut self, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn abort(&mut self) -> Result<(), ProviderError> {
+            self.0.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct RevokingBackend {
+        revoked: Arc<AtomicBool>,
+        aborted: Arc<AtomicBool>,
+    }
+    impl DidEchoBackend for RevokingBackend {
+        fn open(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn stop(&self, _: &str) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn open_pcm_stream(
+            &self,
+            _: &str,
+            _: u32,
+            _: u16,
+            _: &dyn CancellationProbe,
+        ) -> Result<Box<dyn RealtimeAvatarPcmStream>, ProviderError> {
+            self.revoked.store(true, Ordering::SeqCst);
+            Ok(Box::new(PendingStream(Arc::clone(&self.aborted))))
+        }
+    }
+
+    let revoked = Arc::new(AtomicBool::new(false));
+    let aborted = Arc::new(AtomicBool::new(false));
+    let backend = Arc::new(RevokingBackend {
+        revoked: Arc::clone(&revoked),
+        aborted: Arc::clone(&aborted),
+    });
+    let provider = adapter("http://127.0.0.1:1".to_owned()).with_echo_backend(backend);
+    provider.echo_sessions.insert("echo-session-1").unwrap();
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "echo-session-1".to_owned(),
+        provider_session_id: "echo-session-1".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+    let probe = SharedProbe(Arc::clone(&revoked));
+    let error = match provider.open_pcm_stream(&session, 24000, 1, &probe) {
+        Ok(_) => panic!("revoked private stream must never be returned"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert!(aborted.load(Ordering::SeqCst));
+}
