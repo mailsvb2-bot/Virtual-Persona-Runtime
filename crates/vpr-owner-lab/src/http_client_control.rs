@@ -44,6 +44,18 @@ pub(super) fn retain_completed_reply(
     reply: &str,
 ) {
     let mut cached = source.lock();
+    retain_completed_reply_locked(&mut cached, session_end_requested, request_sequence, reply);
+}
+
+/// Called only with the canonical replay_source lock held. The voice worker
+/// verifies its session generation while holding this same lock, so an old
+/// result cannot overwrite a newer session's replay entitlement.
+pub(super) fn retain_completed_reply_locked(
+    cached: &mut Option<AuthorizedReply>,
+    session_end_requested: &AtomicBool,
+    request_sequence: u64,
+    reply: &str,
+) {
     if session_end_requested.load(Ordering::Acquire)
         || reply.trim().is_empty()
         || reply.len() > 16_000
