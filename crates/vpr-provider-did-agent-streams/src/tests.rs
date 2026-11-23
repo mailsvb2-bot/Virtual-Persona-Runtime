@@ -2059,7 +2059,6 @@ fn echo_stop_waits_for_in_flight_private_open_before_forgetting_sender() {
     assert!(!registry.contains("opening-sender").unwrap());
 }
 
-
 #[test]
 fn echo_pcm_open_revoked_by_backend_aborts_stream_and_denies_handoff() {
     use std::sync::Arc;
@@ -2073,11 +2072,7 @@ fn echo_pcm_open_revoked_by_backend_aborts_stream_and_denies_handoff() {
 
     struct PendingStream(Arc<AtomicBool>);
     impl RealtimeAvatarPcmStream for PendingStream {
-        fn push_pcm(
-            &mut self,
-            _: &[u8],
-            _: &dyn CancellationProbe,
-        ) -> Result<(), ProviderError> {
+        fn push_pcm(&mut self, _: &[u8], _: &dyn CancellationProbe) -> Result<(), ProviderError> {
             Ok(())
         }
 
