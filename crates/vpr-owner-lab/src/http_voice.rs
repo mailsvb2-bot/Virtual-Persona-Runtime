@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use tiny_http::Request;
 use vpr_domain::Rt0ReasonCode;
-use vpr_owner_lab::{LabError, LabEvidenceError, LabVoiceInput, LabVoiceResult};
+use vpr_owner_lab::{LabError, LabEvidenceError, LabVoiceInput};
 
 use super::{
     AppState, HttpResponse, error_response, http_evidence, json_response, reject_if_session_ending,
@@ -16,6 +16,9 @@ use super::{
 mod voice_event;
 #[path = "http_voice_trace.rs"]
 mod voice_trace;
+#[path = "http_voice_terminal.rs"]
+mod voice_terminal;
+use voice_terminal::prepare_voice_terminal_event;
 use voice_event::VoiceStreamEvent;
 #[path = "http_voice_stream.rs"]
 mod voice_stream;
@@ -552,67 +555,6 @@ pub(super) fn events_response(
         state.session_end_requested.load(Ordering::Acquire),
     );
     Ok(json_response(200, &response))
-}
-
-fn prepare_voice_terminal_event(
-    state: &AppState,
-    session_sequence: u64,
-    request_sequence: u64,
-    result: Result<LabVoiceResult, LabError>,
-) -> VoiceStreamEvent {
-    // Session registration and teardown also hold replay_source while updating
-    // the generation. Keep this guard through terminal evidence/replay commit:
-    // an old worker must neither clear nor repopulate a new session's reply.
-    let Some(mut replay) = super::http_client_control::begin_voice_terminal_replay(
-        &state.replay_source,
-        &state.active_session_sequence,
-        &state.session_end_requested,
-        session_sequence,
-    ) else {
-        return VoiceStreamEvent::Failed {
-            code: "INVALID_STATE_TRANSITION".to_owned(),
-            diagnostic: None,
-        };
-    };
-    *replay = None;
-    match result {
-        Ok(value) => match state
-            .evidence
-            .lock()
-            .complete_voice_request(request_sequence, &value)
-        {
-            Ok(()) => {
-                super::http_client_control::retain_completed_reply_locked(
-                    &mut replay,
-                    &state.session_end_requested,
-                    request_sequence,
-                    &value.reply,
-                );
-                VoiceStreamEvent::Complete {
-                    result: Box::new(value),
-                }
-            }
-            Err(error) => VoiceStreamEvent::Failed {
-                code: error.code().to_owned(),
-                diagnostic: None,
-            },
-        },
-        Err(error) => {
-            let code = match state
-                .evidence
-                .lock()
-                .fail_voice_request(request_sequence, error.code())
-            {
-                Ok(()) => error.code(),
-                Err(evidence_error) => evidence_error.code(),
-            };
-            VoiceStreamEvent::Failed {
-                code: code.to_owned(),
-                diagnostic: matches!(error, LabError::SpeechNotRecognized)
-                    .then(|| "STT_NO_FINAL_TRANSCRIPT".to_owned()),
-            }
-        }
-    }
 }
 
 #[cfg(test)]
