@@ -59,7 +59,10 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   const safePath = (url: string): string => {
     try {
       const parsed = new URL(url);
-      return parsed.origin === ownerLabUrl ? parsed.pathname : "[external]";
+      if (parsed.origin !== ownerLabUrl) return "[external]";
+      // Never persist owner IDs, tokens or arbitrary API URL segments.
+      return /^\/[a-zA-Z0-9_.-]+\.(js|css|html|wasm)$/.test(parsed.pathname)
+        || parsed.pathname === "/" ? parsed.pathname : "[same-origin-other]";
     } catch {
       return "[invalid]";
     }
