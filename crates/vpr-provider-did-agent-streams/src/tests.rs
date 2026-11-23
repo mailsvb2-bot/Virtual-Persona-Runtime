@@ -1296,6 +1296,70 @@ fn echo_speech_revoked_inside_backend_never_reports_success() {
 }
 
 #[test]
+fn echo_one_shot_pcm_revoked_inside_backend_never_reports_success() {
+    use std::sync::Arc;
+
+    struct RevokingPcmBackend {
+        revoked: Arc<AtomicBool>,
+    }
+    impl DidEchoBackend for RevokingPcmBackend {
+        fn open(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn speak_pcm(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: u32,
+            _: u16,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            self.revoked.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        fn stop(&self, _: &str) -> Result<(), ProviderError> {
+            Ok(())
+        }
+    }
+
+    struct SharedProbe(Arc<AtomicBool>);
+    impl CancellationProbe for SharedProbe {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+
+    let revoked = Arc::new(AtomicBool::new(false));
+    let provider = adapter("http://127.0.0.1:1".to_owned()).with_echo_backend(Arc::new(
+        RevokingPcmBackend {
+            revoked: Arc::clone(&revoked),
+        },
+    ));
+    provider.echo_sessions.insert("pcm-one-shot").unwrap();
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "pcm-one-shot".to_owned(),
+        provider_session_id: "pcm-one-shot".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+    let error = provider
+        .speak_pcm(&session, &[0, 0], 16_000, 1, &SharedProbe(revoked))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+}
+
+#[test]
 fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first() {
     use std::sync::Arc;
 
