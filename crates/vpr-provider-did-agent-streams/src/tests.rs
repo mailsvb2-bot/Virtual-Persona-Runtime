@@ -2145,3 +2145,92 @@ fn echo_pcm_open_revoked_by_backend_aborts_stream_and_denies_handoff() {
     assert_eq!(error.kind, ProviderErrorKind::Cancelled);
     assert!(aborted.load(Ordering::SeqCst));
 }
+
+
+#[test]
+fn echo_pcm_stream_rechecks_stop_and_cancel_after_backend_write() {
+    use std::sync::Arc;
+
+    struct Probe(Arc<AtomicBool>);
+    impl CancellationProbe for Probe {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+
+    struct RacingStream {
+        registry: Arc<DidEchoRegistry>,
+        revoked: Arc<AtomicBool>,
+        aborts: Arc<AtomicUsize>,
+        cancel_during_write: bool,
+    }
+    impl RealtimeAvatarPcmStream for RacingStream {
+        fn push_pcm(&mut self, _: &[u8], _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            if self.cancel_during_write {
+                self.revoked.store(true, Ordering::SeqCst);
+            } else {
+                self.registry.remove("pcm-race").unwrap();
+            }
+            Ok(())
+        }
+
+        fn finish(&mut self, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            self.registry.remove("pcm-race").unwrap();
+            Ok(())
+        }
+
+        fn abort(&mut self) -> Result<(), ProviderError> {
+            self.aborts.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    for cancel_during_write in [false, true] {
+        let registry = Arc::new(DidEchoRegistry::default());
+        registry.insert("pcm-race").unwrap();
+        let revoked = Arc::new(AtomicBool::new(false));
+        let aborts = Arc::new(AtomicUsize::new(0));
+        let mut stream = RevocableEchoPcmStream {
+            inner: Box::new(RacingStream {
+                registry: Arc::clone(&registry),
+                revoked: Arc::clone(&revoked),
+                aborts: Arc::clone(&aborts),
+                cancel_during_write,
+            }),
+            sessions: Arc::clone(&registry),
+            session_id: "pcm-race".to_owned(),
+            terminated: false,
+        };
+        let probe = Probe(revoked);
+        let error = stream.push_pcm(&[0, 0], &probe).unwrap_err();
+        assert_eq!(
+            error.kind,
+            if cancel_during_write {
+                ProviderErrorKind::Cancelled
+            } else {
+                ProviderErrorKind::PolicyDenied
+            }
+        );
+        assert_eq!(aborts.load(Ordering::SeqCst), 1);
+        assert!(stream.push_pcm(&[0, 0], &probe).is_err());
+    }
+
+    let registry = Arc::new(DidEchoRegistry::default());
+    registry.insert("pcm-race").unwrap();
+    let revoked = Arc::new(AtomicBool::new(false));
+    let aborts = Arc::new(AtomicUsize::new(0));
+    let mut stream = RevocableEchoPcmStream {
+        inner: Box::new(RacingStream {
+            registry: Arc::clone(&registry),
+            revoked: Arc::clone(&revoked),
+            aborts: Arc::clone(&aborts),
+            cancel_during_write: false,
+        }),
+        sessions: registry,
+        session_id: "pcm-race".to_owned(),
+        terminated: false,
+    };
+    let error = stream.finish(&Probe(revoked)).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
+    assert_eq!(aborts.load(Ordering::SeqCst), 1);
+}
