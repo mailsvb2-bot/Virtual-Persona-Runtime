@@ -2536,6 +2536,7 @@ const interruptAndOfferResume = async () => {
                 if (resumeSourceRequest === null)
                     throw new Error("RESUME_SOURCE_UNAVAILABLE");
                 await api("/api/avatar/confirm-interruption", {
+                    expected_session_sequence: evidenceSessionSequence,
                     request_sequence: resumeSourceRequest,
                 });
                 offerInterruptedAnswer(sentences, elapsed, offset);
@@ -2589,6 +2590,7 @@ const resumeInterruptedAnswer = async () => {
         if (resumeSourceRequest === null)
             throw new Error("RESUME_SOURCE_UNAVAILABLE");
         prepared = await api("/api/avatar/resume-answer", {
+            expected_session_sequence: evidenceSessionSequence,
             request_sequence: resumeSourceRequest,
             sentence_index: index,
             ...(manualCursorOffset !== null ? { character_offset: manualCursorOffset } : {}),
