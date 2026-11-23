@@ -64,7 +64,7 @@ pub(crate) fn send_private_pcm(
     {
         return Err(policy_denied());
     }
-    adapter
+    let result = adapter
         .echo_backend
         .as_ref()
         .ok_or_else(policy_denied)?
@@ -74,7 +74,14 @@ pub(crate) fn send_private_pcm(
             sample_rate_hz,
             channels,
             cancellation,
-        )
+        );
+    // A backend may return after STOP or cancellation. Never acknowledge
+    // that stale publication as successful, even if the backend did.
+    DidAgentStreamsAvatar::ensure_active(cancellation)?;
+    if !adapter.echo_sessions.contains(&session.provider_session_id)? {
+        return Err(policy_denied());
+    }
+    result
 }
 
 /// A private PCM stream retains the same Echo registration as the parent adapter.
