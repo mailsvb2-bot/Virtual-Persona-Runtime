@@ -78,7 +78,10 @@ pub(crate) fn send_private_pcm(
     // A backend may return after STOP or cancellation. Never acknowledge
     // that stale publication as successful, even if the backend did.
     DidAgentStreamsAvatar::ensure_active(cancellation)?;
-    if !adapter.echo_sessions.contains(&session.provider_session_id)? {
+    if !adapter
+        .echo_sessions
+        .contains(&session.provider_session_id)?
+    {
         return Err(policy_denied());
     }
     result
