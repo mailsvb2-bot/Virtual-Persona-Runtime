@@ -1844,7 +1844,7 @@ fn blocked_echo_stop_does_not_block_another_sender() {
 
 #[test]
 fn echo_interrupt_cannot_overtake_in_flight_final_stop() {
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     struct StopFenceBackend {
