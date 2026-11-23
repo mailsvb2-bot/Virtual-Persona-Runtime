@@ -263,6 +263,10 @@ pub(super) fn route_post(
                 // the shared runtime authority immediately.
                 let suffix = {
                     let source = state.replay_source.lock();
+                    if state.active_session_sequence.load(Ordering::Acquire) != session_sequence {
+                        return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+                    }
+                    reject_if_session_ending(state)?;
                     let reply = source
                         .as_ref()
                         .ok_or_else(|| super::error_response(409, "INVALID_STATE_TRANSITION"))?;
