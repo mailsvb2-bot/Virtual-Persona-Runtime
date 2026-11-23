@@ -37,6 +37,9 @@ pub(super) struct AuthorizedReply {
 /// Publish a completed canonical reply only while its session is still live.
 /// Session teardown sets the atomic termination intent before clearing this
 /// cache, so a late STT/LLM completion must not resurrect replay authority.
+// Production voice completion holds the mutex and uses the locked variant.
+// This wrapper exists solely for isolated replay-cache unit tests.
+#[cfg(test)]
 pub(super) fn retain_completed_reply(
     source: &ParkingMutex<Option<AuthorizedReply>>,
     session_end_requested: &AtomicBool,
