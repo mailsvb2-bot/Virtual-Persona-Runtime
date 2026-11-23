@@ -1841,3 +1841,81 @@ fn blocked_echo_stop_does_not_block_another_sender() {
     assert!(!registry.contains("blocked").unwrap());
     assert!(!registry.contains("independent").unwrap());
 }
+
+#[test]
+fn echo_interrupt_cannot_overtake_in_flight_final_stop() {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    struct StopFenceBackend {
+        started: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+        interrupts: std::sync::atomic::AtomicUsize,
+    }
+    impl DidEchoBackend for StopFenceBackend {
+        fn open(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Err(unavailable())
+        }
+        fn stop(&self, _: &str) -> Result<(), ProviderError> {
+            self.started.send(()).unwrap();
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap();
+            Ok(())
+        }
+        fn interrupt(&self, _: &str) -> Result<(), ProviderError> {
+            self.interrupts.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    let registry = Arc::new(DidEchoRegistry::default());
+    registry.insert("revoked-sender").unwrap();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let backend = Arc::new(StopFenceBackend {
+        started: started_tx,
+        release: Mutex::new(release_rx),
+        interrupts: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let stop_registry = Arc::clone(&registry);
+    let stop_backend = Arc::clone(&backend);
+    let stopper = thread::spawn(move || {
+        stop_registry.close_session(stop_backend.as_ref(), "revoked-sender")
+    });
+    started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+    let interrupt_registry = Arc::clone(&registry);
+    let interrupt_backend = Arc::clone(&backend);
+    let (done_tx, done_rx) = mpsc::channel();
+    let interrupter = thread::spawn(move || {
+        done_tx
+            .send(interrupt_registry.interrupt_session(
+                Some(interrupt_backend.as_ref()),
+                "revoked-sender",
+            ))
+            .unwrap();
+    });
+    // While STOP is in flight, interrupt must not be delivered to the sender.
+    assert!(done_rx.recv_timeout(Duration::from_millis(80)).is_err());
+    assert_eq!(backend.interrupts.load(Ordering::SeqCst), 0);
+    release_tx.send(()).unwrap();
+    stopper.join().unwrap().unwrap();
+    interrupter.join().unwrap();
+    assert_eq!(
+        done_rx.recv_timeout(Duration::from_secs(2)).unwrap().unwrap_err().kind,
+        ProviderErrorKind::Unavailable
+    );
+    assert_eq!(backend.interrupts.load(Ordering::SeqCst), 0);
+}
