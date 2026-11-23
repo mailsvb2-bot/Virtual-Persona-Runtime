@@ -355,7 +355,15 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
                 return Err(policy_denied());
             }
             let backend = self.echo_backend.as_ref().ok_or_else(policy_denied)?;
-            return backend.speak(&session.provider_session_id, text, cancellation);
+            backend.speak(&session.provider_session_id, text, cancellation)?;
+            // A revoke may arrive while the backend is publishing. Never
+            // acknowledge playback as successful after authority was lost.
+            // Remote transport cancellation remains the backend's obligation.
+            Self::ensure_active(cancellation)?;
+            if !self.echo_sessions.contains(&session.provider_session_id)? {
+                return Err(policy_denied());
+            }
+            return Ok(());
         }
         if self.echo_backend.is_some() {
             return Err(policy_denied());
