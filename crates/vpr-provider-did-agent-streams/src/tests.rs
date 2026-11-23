@@ -1,4 +1,5 @@
 use super::*;
+use super::echo_pcm::RevocableEchoPcmStream;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -2145,7 +2146,6 @@ fn echo_pcm_open_revoked_by_backend_aborts_stream_and_denies_handoff() {
     assert_eq!(error.kind, ProviderErrorKind::Cancelled);
     assert!(aborted.load(Ordering::SeqCst));
 }
-
 
 #[test]
 fn echo_pcm_stream_rechecks_stop_and_cancel_after_backend_write() {
