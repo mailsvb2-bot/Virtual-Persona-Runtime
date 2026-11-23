@@ -418,8 +418,14 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         // Never hand an already-revoked stream to the caller. Dropping it
         // releases its local transport resources; remote STOP remains a
         // separate provider acknowledgement requirement.
-        Self::ensure_active(cancellation)?;
+        if cancellation.is_cancelled() {
+            let mut stream = stream;
+            let _ = stream.abort();
+            return Err(cancelled());
+        }
         if !self.echo_sessions.contains(&session.provider_session_id)? {
+            let mut stream = stream;
+            let _ = stream.abort();
             return Err(policy_denied());
         }
         Ok(stream)
