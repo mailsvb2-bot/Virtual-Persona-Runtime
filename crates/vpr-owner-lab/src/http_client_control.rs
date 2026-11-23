@@ -1,6 +1,6 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use parking_lot::Mutex as ParkingMutex;
+use parking_lot::{Mutex as ParkingMutex, MutexGuard as ParkingMutexGuard};
 
 use serde::Deserialize;
 use tiny_http::Request;
@@ -37,6 +37,8 @@ pub(super) struct AuthorizedReply {
 /// Publish a completed canonical reply only while its session is still live.
 /// Session teardown sets the atomic termination intent before clearing this
 /// cache, so a late STT/LLM completion must not resurrect replay authority.
+// The existing text-completion path uses this mutex-owning helper;
+// voice completion uses the locked variant to fence its session epoch.
 pub(super) fn retain_completed_reply(
     source: &ParkingMutex<Option<AuthorizedReply>>,
     session_end_requested: &AtomicBool,
@@ -44,6 +46,37 @@ pub(super) fn retain_completed_reply(
     reply: &str,
 ) {
     let mut cached = source.lock();
+    retain_completed_reply_locked(&mut cached, session_end_requested, request_sequence, reply);
+}
+
+/// Acquire the existing replay lock and validate the originating session under
+/// that SAME lock used by session registration and revoke. A stale completion
+/// may not remove or overwrite another session's saved answer.
+pub(super) fn begin_voice_terminal_replay<'a>(
+    source: &'a ParkingMutex<Option<AuthorizedReply>>,
+    active_session_sequence: &AtomicU64,
+    session_end_requested: &AtomicBool,
+    expected_session_sequence: u64,
+) -> Option<ParkingMutexGuard<'a, Option<AuthorizedReply>>> {
+    let cached = source.lock();
+    if expected_session_sequence == 0
+        || active_session_sequence.load(Ordering::Acquire) != expected_session_sequence
+        || session_end_requested.load(Ordering::Acquire)
+    {
+        return None;
+    }
+    Some(cached)
+}
+
+/// Called only with the canonical `replay_source` lock held. The voice worker
+/// verifies its session generation while holding this same lock, so an old
+/// result cannot overwrite a newer session's replay entitlement.
+pub(super) fn retain_completed_reply_locked(
+    cached: &mut Option<AuthorizedReply>,
+    session_end_requested: &AtomicBool,
+    request_sequence: u64,
+    reply: &str,
+) {
     if session_end_requested.load(Ordering::Acquire)
         || reply.trim().is_empty()
         || reply.len() > 16_000
@@ -420,6 +453,36 @@ mod resume_tests {
             source.lock().is_none(),
             "late completion must not revive revoked replay"
         );
+    }
+
+    #[test]
+    fn late_previous_session_terminal_cannot_clear_or_reauthorize_new_reply() {
+        use parking_lot::Mutex;
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+        let source = Mutex::new(None);
+        let active = AtomicU64::new(1);
+        let ending = AtomicBool::new(false);
+
+        {
+            let mut replay =
+                super::begin_voice_terminal_replay(&source, &active, &ending, 1).unwrap();
+            super::retain_completed_reply_locked(&mut replay, &ending, 7, "Старый ответ.");
+        }
+        // A new session replaced the cached answer under the same canonical
+        // mutex. The old worker's completion is not allowed to clear it.
+        {
+            let mut replay = source.lock();
+            active.store(2, Ordering::Release);
+            super::retain_completed_reply_locked(&mut replay, &ending, 8, "Ответ новой сессии.");
+        }
+        assert!(super::begin_voice_terminal_replay(&source, &active, &ending, 1).is_none());
+        assert_eq!(source.lock().as_ref().unwrap().request_sequence, 8);
+        assert_eq!(source.lock().as_ref().unwrap().reply, "Ответ новой сессии.");
+
+        ending.store(true, Ordering::Release);
+        assert!(super::begin_voice_terminal_replay(&source, &active, &ending, 2).is_none());
+        assert!(super::begin_voice_terminal_replay(&source, &active, &ending, 0).is_none());
     }
 
     #[test]

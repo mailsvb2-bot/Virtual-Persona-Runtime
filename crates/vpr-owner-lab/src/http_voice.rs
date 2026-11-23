@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use tiny_http::Request;
 use vpr_domain::Rt0ReasonCode;
-use vpr_owner_lab::{LabError, LabEvidenceError, LabVoiceInput, LabVoiceResult};
+use vpr_owner_lab::{LabError, LabEvidenceError, LabVoiceInput};
 
 use super::{
     AppState, HttpResponse, error_response, http_evidence, json_response, reject_if_session_ending,
@@ -14,9 +14,12 @@ use super::{
 
 #[path = "http_voice_event.rs"]
 mod voice_event;
+#[path = "http_voice_terminal.rs"]
+mod voice_terminal;
 #[path = "http_voice_trace.rs"]
 mod voice_trace;
 use voice_event::VoiceStreamEvent;
+use voice_terminal::prepare_voice_terminal_event;
 #[path = "http_voice_stream.rs"]
 mod voice_stream;
 #[cfg(test)]
@@ -452,7 +455,8 @@ fn spawn_voice_worker(
             voice_trace::completed(session_sequence, request_sequence);
         }
         *worker_state.active_voice_interrupt.lock() = None;
-        let terminal = prepare_voice_terminal_event(&worker_state, request_sequence, result);
+        let terminal =
+            prepare_voice_terminal_event(&worker_state, session_sequence, request_sequence, result);
         worker_state.voice_streams.finish_with_unlock(
             session_sequence,
             request_sequence,
@@ -547,52 +551,6 @@ pub(super) fn events_response(
         state.session_end_requested.load(Ordering::Acquire),
     );
     Ok(json_response(200, &response))
-}
-
-fn prepare_voice_terminal_event(
-    state: &AppState,
-    request_sequence: u64,
-    result: Result<LabVoiceResult, LabError>,
-) -> VoiceStreamEvent {
-    *state.replay_source.lock() = None;
-    match result {
-        Ok(value) => match state
-            .evidence
-            .lock()
-            .complete_voice_request(request_sequence, &value)
-        {
-            Ok(()) => {
-                super::http_client_control::retain_completed_reply(
-                    &state.replay_source,
-                    &state.session_end_requested,
-                    request_sequence,
-                    &value.reply,
-                );
-                VoiceStreamEvent::Complete {
-                    result: Box::new(value),
-                }
-            }
-            Err(error) => VoiceStreamEvent::Failed {
-                code: error.code().to_owned(),
-                diagnostic: None,
-            },
-        },
-        Err(error) => {
-            let code = match state
-                .evidence
-                .lock()
-                .fail_voice_request(request_sequence, error.code())
-            {
-                Ok(()) => error.code(),
-                Err(evidence_error) => evidence_error.code(),
-            };
-            VoiceStreamEvent::Failed {
-                code: code.to_owned(),
-                diagnostic: matches!(error, LabError::SpeechNotRecognized)
-                    .then(|| "STT_NO_FINAL_TRANSCRIPT".to_owned()),
-            }
-        }
-    }
 }
 
 #[cfg(test)]
