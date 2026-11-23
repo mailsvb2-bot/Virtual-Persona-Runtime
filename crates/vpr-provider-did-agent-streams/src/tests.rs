@@ -1991,7 +1991,10 @@ fn echo_stop_waits_for_in_flight_private_open_before_forgetting_sender() {
     release_tx.send(()).unwrap();
     opening.join().unwrap().unwrap();
     closing.join().unwrap();
-    done_rx.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
+    done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap()
+        .unwrap();
     assert_eq!(backend.stops.load(Ordering::SeqCst), 1);
     assert!(!registry.contains("opening-sender").unwrap());
 }
