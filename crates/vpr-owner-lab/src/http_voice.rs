@@ -563,15 +563,17 @@ fn prepare_voice_terminal_event(
     // Session registration and teardown also hold replay_source while updating
     // the generation. Keep this guard through terminal evidence/replay commit:
     // an old worker must neither clear nor repopulate a new session's reply.
-    let mut replay = state.replay_source.lock();
-    if state.active_session_sequence.load(Ordering::Acquire) != session_sequence
-        || state.session_end_requested.load(Ordering::Acquire)
-    {
+    let Some(mut replay) = super::http_client_control::begin_voice_terminal_replay(
+        &state.replay_source,
+        &state.active_session_sequence,
+        &state.session_end_requested,
+        session_sequence,
+    ) else {
         return VoiceStreamEvent::Failed {
             code: "INVALID_STATE_TRANSITION".to_owned(),
             diagnostic: None,
         };
-    }
+    };
     *replay = None;
     match result {
         Ok(value) => match state
