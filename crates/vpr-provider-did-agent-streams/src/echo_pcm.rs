@@ -1,12 +1,18 @@
 //! Canonical PCM16 speech payload for the private Echo worker.
 //! Never accepts text, tokens, provider selection or browser-originated audio.
-use super::{DidAgentStreamsAvatar, echo::DidEchoRegistry, provider_error::{cancelled, policy_denied}};
-use std::sync::Arc;
-use serde_json::{Value, json};
 use std::fmt::Write as _;
+use std::sync::Arc;
+
+use serde_json::{Value, json};
 use vpr_integration::{
     CancellationProbe, ProviderError, ProviderErrorKind, RealtimeAvatarPcmStream,
     RealtimeAvatarSession, RealtimeAvatarTransport,
+};
+
+use super::{
+    DidAgentStreamsAvatar,
+    echo::DidEchoRegistry,
+    provider_error::{cancelled, policy_denied},
 };
 
 /// Encodes a bounded, already-authorized PCM16 buffer for the private worker.
