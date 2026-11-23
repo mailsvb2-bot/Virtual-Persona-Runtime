@@ -135,6 +135,11 @@ impl DidEchoRegistry {
         if cancellation.is_cancelled() {
             return Err(super::cancelled());
         }
+        // Serialize OPEN with STOP/interrupt for this identity. Otherwise a
+        // concurrent STOP could forget the reservation while backend.open is
+        // still connecting, leaving a live untracked publisher after OPEN.
+        let session_lock = self.session_stop_lock(id)?;
+        let _guard = session_lock.lock().map_err(|_| super::invalid_response())?;
         self.insert(id)?;
         // A revoke can land while the identity reservation lock is acquired.
         // No private transport exists yet, so release this reservation and
@@ -153,13 +158,13 @@ impl DidEchoRegistry {
             if matches!(backend.sender_definitely_absent(id), Ok(true)) {
                 self.remove(id)?;
             } else {
-                let _ = self.close_session(backend, id);
+                let _ = self.close_session_locked(backend, id);
             }
             return Err(error);
         }
         if cancellation.is_cancelled() {
             // Revocation after OPEN must never discard an unconfirmed sender.
-            self.close_session(backend, id)?;
+            self.close_session_locked(backend, id)?;
             return Err(super::cancelled());
         }
         Ok(())
@@ -205,6 +210,15 @@ impl DidEchoRegistry {
     ) -> Result<(), ProviderError> {
         let stop_lock = self.session_stop_lock(id)?;
         let _stop_guard = stop_lock.lock().map_err(|_| super::invalid_response())?;
+        self.close_session_locked(backend, id)
+    }
+
+    // Caller owns the per-session fence; OPEN must not recursively lock it.
+    fn close_session_locked(
+        &self,
+        backend: &dyn DidEchoBackend,
+        id: &str,
+    ) -> Result<(), ProviderError> {
         // Recheck AFTER acquiring the per-session lock: a concurrent caller
         // may already have received STOP, forgotten and removed this sender.
         if !self.contains(id)? {
