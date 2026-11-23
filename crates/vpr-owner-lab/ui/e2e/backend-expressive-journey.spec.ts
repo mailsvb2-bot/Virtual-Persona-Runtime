@@ -393,7 +393,7 @@ test("Expressive server STOP is sent from backend and prevents stale replay", as
   await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 15000 })
     .toEqual(expect.arrayContaining(["provider_stop_sent"]));
   await expectUnconfirmedDidStop(request, csrf);
-  const replay = await postJson(request, csrf, "/api/avatar/resume-answer", { request_sequence: 1, sentence_index: 0 });
+  const replay = await postJson(request, csrf, "/api/avatar/resume-answer", { expected_session_sequence: sequence, request_sequence: 1, sentence_index: 0 });
   expect(replay.status()).toBe(409);
 });
 
@@ -419,7 +419,7 @@ test("second caller cannot restart speech after canonical revoke", async ({ requ
   const { csrf, sequence } = await startEcho(request);
   await expectUnconfirmedDidStop(request, csrf);
   const before = await echoEvents(request);
-  const rejected = await postJson(request, csrf, "/api/avatar/resume-answer", { request_sequence: 1, sentence_index: 0 });
+  const rejected = await postJson(request, csrf, "/api/avatar/resume-answer", { expected_session_sequence: sequence, request_sequence: 1, sentence_index: 0 });
   expect(rejected.status()).toBe(409);
   const rejectedTurn = await submitOwnerTurn(request, csrf, 1, sequence, "Несанкционированный ответ");
   expect(rejectedTurn.ok()).toBeFalsy();
@@ -470,10 +470,12 @@ test("Expressive server STOP cancels in-flight TTS and quarantines unconfirmed p
   // An incomplete/cancelled response is not replay authority and must not be
   // regenerated as if it were the owner's completed answer.
   const confirmed = await postJson(request, csrf, "/api/avatar/confirm-interruption", {
+    expected_session_sequence: sequence,
     request_sequence: 1,
   });
   expect(confirmed.status()).toBe(409);
   const resumed = await postJson(request, csrf, "/api/avatar/resume-answer", {
+    expected_session_sequence: sequence,
     request_sequence: 1,
     sentence_index: 0,
   });
@@ -523,6 +525,7 @@ test("Expressive server resume is reauthorized and delivered through canonical E
     .toEqual(expect.arrayContaining(["provider_stop_sent"]));
 
   const confirmed = await postJson(request, csrf, "/api/avatar/confirm-interruption", {
+    expected_session_sequence: sequence,
     request_sequence: 1,
   });
   expect(confirmed.ok()).toBeTruthy();
@@ -530,6 +533,7 @@ test("Expressive server resume is reauthorized and delivered through canonical E
   // The browser supplies only a cursor. The server resolves the suffix from
   // its retained authorized reply and prepares a fresh canonical output.
   const resumed = await postJson(request, csrf, "/api/avatar/resume-answer", {
+    expected_session_sequence: sequence,
     request_sequence: 1,
     sentence_index: 0,
   });
@@ -570,6 +574,7 @@ test("Owner revoke is not blocked behind a stalled authorized resume TTS", async
   });
   expect(interrupted.ok()).toBeTruthy();
   const confirmed = await postJson(request, csrf, "/api/avatar/confirm-interruption", {
+    expected_session_sequence: sequence,
     request_sequence: 1,
   });
   expect(confirmed.ok()).toBeTruthy();
@@ -583,6 +588,7 @@ test("Owner revoke is not blocked behind a stalled authorized resume TTS", async
   expect(held.ok()).toBeTruthy();
   // Start an authorized replay without awaiting its blocked provider response.
   const resume = postJson(request, csrf, "/api/avatar/resume-answer", {
+    expected_session_sequence: sequence,
     request_sequence: 1,
     sentence_index: 0,
   });
