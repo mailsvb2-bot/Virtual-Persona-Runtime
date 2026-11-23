@@ -1891,9 +1891,8 @@ fn echo_interrupt_cannot_overtake_in_flight_final_stop() {
     });
     let stop_registry = Arc::clone(&registry);
     let stop_backend = Arc::clone(&backend);
-    let stopper = thread::spawn(move || {
-        stop_registry.close_session(stop_backend.as_ref(), "revoked-sender")
-    });
+    let stopper =
+        thread::spawn(move || stop_registry.close_session(stop_backend.as_ref(), "revoked-sender"));
     started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
 
     let interrupt_registry = Arc::clone(&registry);
@@ -1901,10 +1900,10 @@ fn echo_interrupt_cannot_overtake_in_flight_final_stop() {
     let (done_tx, done_rx) = mpsc::channel();
     let interrupter = thread::spawn(move || {
         done_tx
-            .send(interrupt_registry.interrupt_session(
-                Some(interrupt_backend.as_ref()),
-                "revoked-sender",
-            ))
+            .send(
+                interrupt_registry
+                    .interrupt_session(Some(interrupt_backend.as_ref()), "revoked-sender"),
+            )
             .unwrap();
     });
     // While STOP is in flight, interrupt must not be delivered to the sender.
@@ -1914,7 +1913,11 @@ fn echo_interrupt_cannot_overtake_in_flight_final_stop() {
     stopper.join().unwrap().unwrap();
     interrupter.join().unwrap();
     assert_eq!(
-        done_rx.recv_timeout(Duration::from_secs(2)).unwrap().unwrap_err().kind,
+        done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap_err()
+            .kind,
         ProviderErrorKind::Unavailable
     );
     assert_eq!(backend.interrupts.load(Ordering::SeqCst), 0);
