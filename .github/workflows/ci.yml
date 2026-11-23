@@ -275,6 +275,14 @@ jobs:
         run: npx playwright install chromium
       - name: Backend-integrated browser E2E
         run: npm run test:e2e:backend
+      - name: Preserve sanitized bootstrap failure evidence (never raw Playwright traces)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rt0-bootstrap-safe-diagnostics-${{ github.sha }}
+          path: crates/vpr-owner-lab/ui/bootstrap-safe-diagnostics.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   owner-lab-ui-voice-e2e:
     runs-on: ubuntu-24.04
