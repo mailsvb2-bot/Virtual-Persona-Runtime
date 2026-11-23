@@ -1236,6 +1236,8 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
 
 #[test]
 fn echo_speech_revoked_inside_backend_never_reports_success() {
+    use std::sync::Arc;
+
     struct RevokingEchoBackend {
         revoked: Arc<AtomicBool>,
     }
@@ -1280,7 +1282,6 @@ fn echo_speech_revoked_inside_backend_never_reports_success() {
             token: "viewer-token".to_owned(),
         },
     };
-    let probe = Probe(AtomicBool::new(false));
     // Use a shared probe state: the backend flips this flag during publication.
     // The result must not acknowledge successful playback after revoke.
     struct SharedProbe(Arc<AtomicBool>);
@@ -1290,7 +1291,7 @@ fn echo_speech_revoked_inside_backend_never_reports_success() {
         }
     }
     let shared = SharedProbe(Arc::clone(&revoked));
-    assert!(!probe.is_cancelled());
+    assert!(!shared.is_cancelled());
     let error = provider
         .speak_text(&session, "late speech", &shared)
         .unwrap_err();
