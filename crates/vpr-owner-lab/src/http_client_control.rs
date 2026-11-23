@@ -315,7 +315,7 @@ fn resume_answer(request: &mut Request, state: &AppState) -> Result<HttpResponse
         reply.resume_count += 1;
         reply.interrupted = false;
         Ok(result)
-        })
+    })
 }
 
 pub(super) fn route_post(
