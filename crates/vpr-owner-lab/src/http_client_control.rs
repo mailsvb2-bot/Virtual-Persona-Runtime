@@ -68,7 +68,7 @@ pub(super) fn begin_voice_terminal_replay<'a>(
     Some(cached)
 }
 
-/// Called only with the canonical replay_source lock held. The voice worker
+/// Called only with the canonical `replay_source` lock held. The voice worker
 /// verifies its session generation while holding this same lock, so an old
 /// result cannot overwrite a newer session's replay entitlement.
 pub(super) fn retain_completed_reply_locked(
