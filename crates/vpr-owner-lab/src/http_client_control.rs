@@ -251,6 +251,12 @@ pub(super) fn route_post(
                     &state.voice_cancel_requested,
                 );
                 reject_if_session_ending(state)?;
+                // Pin the original session across provider I/O. A new session
+                // can reuse the request sequence after the previous one closes.
+                let session_sequence = state.active_session_sequence.load(Ordering::Acquire);
+                if session_sequence == 0 {
+                    return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+                }
                 // Read the previously authorized suffix under the short replay lock.
                 // Never hold this lock across TTS or provider I/O: owner revoke
                 // needs the same lock to set the termination intent and fence
@@ -286,6 +292,9 @@ pub(super) fn route_post(
                 // revoked authority during the slow provider operation.
                 let mut source = state.replay_source.lock();
                 reject_if_session_ending(state)?;
+                if state.active_session_sequence.load(Ordering::Acquire) != session_sequence {
+                    return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+                }
                 let reply = source
                     .as_mut()
                     .ok_or_else(|| super::error_response(409, "INVALID_STATE_TRANSITION"))?;
