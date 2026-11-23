@@ -530,6 +530,17 @@ test("Expressive server resume is reauthorized and delivered through canonical E
   });
   expect(confirmed.ok()).toBeTruthy();
 
+  // An old tab must not spend a matching request number against another
+  // owner session. Deny BEFORE TTS/Echo egress; not merely after returning.
+  const beforeStale = await echoEvents(request);
+  const stale = await postJson(request, csrf, "/api/avatar/resume-answer", {
+    expected_session_sequence: sequence + 1,
+    request_sequence: 1,
+    sentence_index: 0,
+  });
+  expect(stale.status()).toBe(409);
+  expect(await echoEvents(request)).toEqual(beforeStale);
+
   // The browser supplies only a cursor. The server resolves the suffix from
   // its retained authorized reply and prepares a fresh canonical output.
   const resumed = await postJson(request, csrf, "/api/avatar/resume-answer", {
