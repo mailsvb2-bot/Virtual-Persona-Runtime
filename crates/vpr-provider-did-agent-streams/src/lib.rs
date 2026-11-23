@@ -408,12 +408,21 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             return Err(policy_denied());
         }
         let backend = self.echo_backend.as_ref().ok_or_else(policy_denied)?;
-        backend.open_pcm_stream(
+        let stream = backend.open_pcm_stream(
             &session.provider_session_id,
             sample_rate_hz,
             channels,
             cancellation,
-        )
+        )?;
+        // Opening the private publisher can block while STOP/revoke races it.
+        // Never hand an already-revoked stream to the caller. Dropping it
+        // releases its local transport resources; remote STOP remains a
+        // separate provider acknowledgement requirement.
+        Self::ensure_active(cancellation)?;
+        if !self.echo_sessions.contains(&session.provider_session_id)? {
+            return Err(policy_denied());
+        }
+        Ok(stream)
     }
 
     fn speak_audio_url(
