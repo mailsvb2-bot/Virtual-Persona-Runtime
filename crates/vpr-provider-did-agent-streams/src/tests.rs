@@ -1339,11 +1339,10 @@ fn echo_one_shot_pcm_revoked_inside_backend_never_reports_success() {
     }
 
     let revoked = Arc::new(AtomicBool::new(false));
-    let provider = adapter("http://127.0.0.1:1".to_owned()).with_echo_backend(Arc::new(
-        RevokingPcmBackend {
+    let provider =
+        adapter("http://127.0.0.1:1".to_owned()).with_echo_backend(Arc::new(RevokingPcmBackend {
             revoked: Arc::clone(&revoked),
-        },
-    ));
+        }));
     provider.echo_sessions.insert("pcm-one-shot").unwrap();
     let session = RealtimeAvatarSession {
         provider_resource_id: "pcm-one-shot".to_owned(),
