@@ -702,8 +702,10 @@ const readLiveKitTrackPlayout = async (track, kind, previousPackets) => {
 };
 const readAvSyncOffsetMillis = async (state) => {
     const currentPeer = peer;
-    let audioSelection = selectPlayoutTimestamp(undefined, "audio", state.audioPackets);
-    let videoSelection = selectPlayoutTimestamp(undefined, "video", state.videoPackets);
+    let audioSelection;
+    let videoSelection;
+    audioSelection = selectPlayoutTimestamp(undefined, "audio", state.audioPackets);
+    videoSelection = selectPlayoutTimestamp(undefined, "video", state.videoPackets);
     if (currentPeer) {
         try {
             const stats = await currentPeer.getStats();
@@ -711,7 +713,6 @@ const readAvSyncOffsetMillis = async (state) => {
             videoSelection = selectPlayoutTimestamp(stats, "video", state.videoPackets);
         }
         catch {
-            // Continue with real track/receiver stats; never infer media timing.
         }
     }
     if (audioSelection.timestamp === null || videoSelection.timestamp === null) {
