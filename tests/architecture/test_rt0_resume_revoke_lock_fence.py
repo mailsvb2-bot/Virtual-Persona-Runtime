@@ -14,9 +14,10 @@ SESSION = ROOT / "crates/vpr-owner-lab/src/http_session.rs"
 class ResumeRevokeLockFence(unittest.TestCase):
     def test_resume_provider_io_does_not_hold_replay_cache_mutex(self):
         code = CONTROL.read_text(encoding="utf-8")
-        start = code.index('"/api/avatar/resume-answer" =>')
-        end = code.index('"/api/avatar/client-event" =>', start)
+        start = code.index("fn resume_answer(")
+        end = code.index("pub(super) fn route_post(", start)
         route = code[start:end]
+        self.assertIn('"/api/avatar/resume-answer" => Some(resume_answer(request, state))', code)
         self.assertIn("let suffix = {", route)
         self.assertIn("let source = state.replay_source.lock();", route)
         self.assertIn("let result = with_engine_result", route)
@@ -24,7 +25,8 @@ class ResumeRevokeLockFence(unittest.TestCase):
                         route.index("let result = with_engine_result"))
         # The first lock ends at the scoped suffix expression. The second
         # lock must come only after remote provider preparation has returned.
-        self.assertIn("\n                };\n                let result = with_engine_result", route)
+        self.assertLess(route.index("let suffix = {"),
+                        route.index("let result = with_engine_result"))
         self.assertLess(route.index("let result = with_engine_result"),
                         route.index("let mut source = state.replay_source.lock();"))
         self.assertLess(route.index("let mut source = state.replay_source.lock();"),
