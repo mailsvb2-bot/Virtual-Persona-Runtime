@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Request as BrowserRequest } from "@playwright/test";
+import { writeFileSync } from "node:fs";
 
 const ownerLabUrl = "http://127.0.0.1:18787";
 const providerUrl = "http://127.0.0.1:18788";
@@ -54,6 +55,7 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   const scriptFailures: string[] = [];
   const finishedModules = new Set<string>();
   const pageErrorNames: string[] = [];
+  const consoleErrorKinds: string[] = [];
   const safePath = (url: string): string => {
     try {
       const parsed = new URL(url);
@@ -80,6 +82,11 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     }
   });
   page.on("pageerror", (error) => pageErrorNames.push(error.name));
+  // Only record error categories. Console messages can contain provider tokens,
+  // response payloads and raw Persona text and must never enter CI artifacts.
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrorKinds.push("console-error");
+  });
   await installTransportFakes(page);
   await page.goto("/", { waitUntil: "commit", timeout: 20_000 });
   try {
@@ -96,10 +103,22 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     await expect(page.locator("#status")).not.toContainText("Интерфейс не загрузился");
   } catch (error) {
     const displayedStatus = (await page.locator("#status").textContent().catch(() => ""))?.trim();
+    // Emit one deliberately redacted artifact, distinct from the full
+    // Playwright trace, which may contain CSRF/provider credentials.
+    writeFileSync("bootstrap-safe-diagnostics.json", JSON.stringify({
+      pendingPaths: [...pending].slice(0, 40).map(req => safePath(req.url())),
+      failedPaths: failed.slice(0, 40),
+      scriptFailures: scriptFailures.slice(0, 40),
+      pageErrorNames: pageErrorNames.slice(0, 40),
+      consoleErrorKinds: consoleErrorKinds.slice(0, 40),
+      statusKind: displayedStatus?.includes("Интерфейс не загрузился") ? "watchdog-error"
+        : displayedStatus === "Загрузка…" ? "loading" : "other",
+    }, null, 2));
     throw new Error(
       `Owner Lab failed to initialize; pendingPaths=${JSON.stringify([...pending].map(req => safePath(req.url())))}; ` +
       `failedPaths=${JSON.stringify(failed)}; scriptFailures=${JSON.stringify(scriptFailures)}; ` +
-      `pageErrorNames=${JSON.stringify(pageErrorNames)}; status=${JSON.stringify(displayedStatus)}; ` +
+      `pageErrorNames=${JSON.stringify(pageErrorNames)}; consoleErrorKinds=${JSON.stringify(consoleErrorKinds)}; ` +
+      `statusKind=${displayedStatus?.includes("Интерфейс не загрузился") ? "watchdog-error" : "other"}; ` +
       `readiness=${String(error)}`,
     );
   }
