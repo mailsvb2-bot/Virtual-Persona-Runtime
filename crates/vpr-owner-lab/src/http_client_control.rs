@@ -1,7 +1,6 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-#[cfg(test)]
-use parking_lot::Mutex as ParkingMutex;
+use parking_lot::{Mutex as ParkingMutex, MutexGuard as ParkingMutexGuard};
 
 use serde::Deserialize;
 use tiny_http::Request;
@@ -47,6 +46,25 @@ pub(super) fn retain_completed_reply(
 ) {
     let mut cached = source.lock();
     retain_completed_reply_locked(&mut cached, session_end_requested, request_sequence, reply);
+}
+
+/// Acquire the existing replay lock and validate the originating session under
+/// that SAME lock used by session registration and revoke. A stale completion
+/// may not remove or overwrite another session's saved answer.
+pub(super) fn begin_voice_terminal_replay<'a>(
+    source: &'a ParkingMutex<Option<AuthorizedReply>>,
+    active_session_sequence: &AtomicU64,
+    session_end_requested: &AtomicBool,
+    expected_session_sequence: u64,
+) -> Option<ParkingMutexGuard<'a, Option<AuthorizedReply>>> {
+    let cached = source.lock();
+    if expected_session_sequence == 0
+        || active_session_sequence.load(Ordering::Acquire) != expected_session_sequence
+        || session_end_requested.load(Ordering::Acquire)
+    {
+        return None;
+    }
+    Some(cached)
 }
 
 /// Called only with the canonical replay_source lock held. The voice worker
