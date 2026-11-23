@@ -68,6 +68,7 @@ struct GreetingBody {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ResumeAnswerBody {
+    expected_session_sequence: u64,
     request_sequence: u64,
     sentence_index: usize,
     #[serde(default)]
@@ -77,6 +78,7 @@ struct ResumeAnswerBody {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfirmInterruptionBody {
+    expected_session_sequence: u64,
     request_sequence: u64,
 }
 
@@ -165,6 +167,11 @@ fn confirm_interruption(
         return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
     }
     let mut source = state.replay_source.lock();
+    if body.expected_session_sequence == 0
+        || state.active_session_sequence.load(Ordering::Acquire) != body.expected_session_sequence
+    {
+        return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+    }
     let reply = source
         .as_mut()
         .ok_or_else(|| super::error_response(409, "INVALID_STATE_TRANSITION"))?;
@@ -253,8 +260,10 @@ pub(super) fn route_post(
                 reject_if_session_ending(state)?;
                 // Pin the original session across provider I/O. A new session
                 // can reuse the request sequence after the previous one closes.
-                let session_sequence = state.active_session_sequence.load(Ordering::Acquire);
-                if session_sequence == 0 {
+                let session_sequence = body.expected_session_sequence;
+                if session_sequence == 0
+                    || state.active_session_sequence.load(Ordering::Acquire) != session_sequence
+                {
                     return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
                 }
                 // Read the previously authorized suffix under the short replay lock.
