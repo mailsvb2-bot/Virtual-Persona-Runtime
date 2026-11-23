@@ -1,11 +1,12 @@
 //! Canonical PCM16 speech payload for the private Echo worker.
 //! Never accepts text, tokens, provider selection or browser-originated audio.
-use super::{DidAgentStreamsAvatar, provider_error::policy_denied};
+use super::{DidAgentStreamsAvatar, echo::DidEchoRegistry, provider_error::{cancelled, policy_denied}};
+use std::sync::Arc;
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 use vpr_integration::{
-    CancellationProbe, ProviderError, ProviderErrorKind, RealtimeAvatarSession,
-    RealtimeAvatarTransport,
+    CancellationProbe, ProviderError, ProviderErrorKind, RealtimeAvatarPcmStream,
+    RealtimeAvatarSession, RealtimeAvatarTransport,
 };
 
 /// Encodes a bounded, already-authorized PCM16 buffer for the private worker.
@@ -69,3 +70,57 @@ pub(crate) fn send_private_pcm(
             cancellation,
         )
 }
+
+/// A private PCM stream retains the same Echo registration as the parent adapter.
+/// A successful backend call is never acknowledged after STOP or cancellation.
+/// The backend remains responsible for interrupting in-flight network I/O.
+pub(super) struct RevocableEchoPcmStream {
+    pub(super) inner: Box<dyn RealtimeAvatarPcmStream>,
+    pub(super) sessions: Arc<DidEchoRegistry>,
+    pub(super) session_id: String,
+    pub(super) terminated: bool,
+}
+
+impl RevocableEchoPcmStream {
+    fn check(&mut self, cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
+        if self.terminated {
+            return Err(policy_denied());
+        }
+        if cancellation.is_cancelled() {
+            let _ = self.abort();
+            return Err(cancelled());
+        }
+        if !self.sessions.contains(&self.session_id)? {
+            let _ = self.abort();
+            return Err(policy_denied());
+        }
+        Ok(())
+    }
+}
+
+impl RealtimeAvatarPcmStream for RevocableEchoPcmStream {
+    fn push_pcm(
+        &mut self,
+        pcm: &[u8],
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        self.check(cancellation)?;
+        let result = self.inner.push_pcm(pcm, cancellation);
+        self.check(cancellation)?;
+        result
+    }
+
+    fn finish(&mut self, cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
+        self.check(cancellation)?;
+        let result = self.inner.finish(cancellation);
+        self.check(cancellation)?;
+        self.terminated = true;
+        result
+    }
+
+    fn abort(&mut self) -> Result<(), ProviderError> {
+        self.terminated = true;
+        self.inner.abort()
+    }
+}
+
