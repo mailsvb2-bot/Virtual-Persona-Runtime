@@ -1235,6 +1235,66 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
 }
 
 #[test]
+fn echo_speech_revoked_inside_backend_never_reports_success() {
+    use std::sync::Arc;
+
+    struct RevokingEchoBackend {
+        revoked: Arc<AtomicBool>,
+    }
+
+    impl DidEchoBackend for RevokingEchoBackend {
+        fn open(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            self.revoked.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn stop(&self, _: &str) -> Result<(), ProviderError> {
+            Ok(())
+        }
+    }
+
+    struct SharedProbe(Arc<AtomicBool>);
+    impl CancellationProbe for SharedProbe {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+
+    let revoked = Arc::new(AtomicBool::new(false));
+    let backend = Arc::new(RevokingEchoBackend {
+        revoked: Arc::clone(&revoked),
+    });
+    let provider = adapter("http://127.0.0.1:1".to_owned()).with_echo_backend(backend);
+    provider.echo_sessions.insert("echo-session-1").unwrap();
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "echo-session-1".to_owned(),
+        provider_session_id: "echo-session-1".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+    // Use a shared probe state: the backend flips this flag during publication.
+    // The result must not acknowledge successful playback after revoke.
+    let shared = SharedProbe(Arc::clone(&revoked));
+    assert!(!shared.is_cancelled());
+    let error = provider
+        .speak_text(&session, "late speech", &shared)
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+}
+
+#[test]
 fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first() {
     use std::sync::Arc;
 
@@ -1716,4 +1776,372 @@ fn ambiguous_v2_create_server_failure_is_not_marked_retryable() {
     let _ = captured.recv().unwrap();
     let _ = captured.recv().unwrap();
     assert!(captured.try_recv().is_err());
+}
+
+#[test]
+fn concurrent_echo_close_stops_each_sender_once() {
+    use std::sync::{Arc, Barrier};
+    use std::time::Duration;
+
+    struct SlowStop {
+        stops: std::sync::atomic::AtomicUsize,
+    }
+    impl DidEchoBackend for SlowStop {
+        fn open(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Err(unavailable())
+        }
+        fn stop(&self, _: &str) -> Result<(), ProviderError> {
+            self.stops.fetch_add(1, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(30));
+            Ok(())
+        }
+    }
+
+    let registry = Arc::new(DidEchoRegistry::default());
+    let backend = Arc::new(SlowStop {
+        stops: std::sync::atomic::AtomicUsize::new(0),
+    });
+    registry.insert("same-sender").unwrap();
+    let barrier = Arc::new(Barrier::new(9));
+    let workers: Vec<_> = (0..8)
+        .map(|_| {
+            let registry = Arc::clone(&registry);
+            let backend = Arc::clone(&backend);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                registry
+                    .close_session(backend.as_ref(), "same-sender")
+                    .unwrap();
+            })
+        })
+        .collect();
+    barrier.wait();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+    assert_eq!(backend.stops.load(Ordering::SeqCst), 1);
+    assert!(!registry.contains("same-sender").unwrap());
+}
+
+#[test]
+fn blocked_echo_stop_does_not_block_another_sender() {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    struct BlockingStop {
+        started: mpsc::Sender<()>,
+        release: std::sync::Mutex<mpsc::Receiver<()>>,
+    }
+    impl DidEchoBackend for BlockingStop {
+        fn open(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Err(unavailable())
+        }
+        fn stop(&self, id: &str) -> Result<(), ProviderError> {
+            if id == "blocked" {
+                self.started.send(()).unwrap();
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(3))
+                    .unwrap();
+            }
+            Ok(())
+        }
+    }
+
+    let registry = Arc::new(DidEchoRegistry::default());
+    registry.insert("blocked").unwrap();
+    registry.insert("independent").unwrap();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let backend = Arc::new(BlockingStop {
+        started: started_tx,
+        release: std::sync::Mutex::new(release_rx),
+    });
+    let blocked_registry = Arc::clone(&registry);
+    let blocked_backend = Arc::clone(&backend);
+    let blocked =
+        thread::spawn(move || blocked_registry.close_session(blocked_backend.as_ref(), "blocked"));
+    started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+    let independent_registry = Arc::clone(&registry);
+    let independent_backend = Arc::clone(&backend);
+    let (done_tx, done_rx) = mpsc::channel();
+    let independent = thread::spawn(move || {
+        let result =
+            independent_registry.close_session(independent_backend.as_ref(), "independent");
+        done_tx.send(result).unwrap();
+    });
+    let independent_result = done_rx.recv_timeout(Duration::from_secs(2));
+    release_tx.send(()).unwrap();
+    blocked.join().unwrap().unwrap();
+    independent.join().unwrap();
+    independent_result
+        .expect("independent STOP blocked by unrelated sender")
+        .unwrap();
+    assert!(!registry.contains("blocked").unwrap());
+    assert!(!registry.contains("independent").unwrap());
+}
+
+#[test]
+fn echo_interrupt_cannot_overtake_in_flight_final_stop() {
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    struct StopFenceBackend {
+        started: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+        interrupts: std::sync::atomic::AtomicUsize,
+    }
+    impl DidEchoBackend for StopFenceBackend {
+        fn open(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Err(unavailable())
+        }
+        fn stop(&self, _: &str) -> Result<(), ProviderError> {
+            self.started.send(()).unwrap();
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap();
+            Ok(())
+        }
+        fn interrupt(&self, _: &str) -> Result<(), ProviderError> {
+            self.interrupts.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    let registry = Arc::new(DidEchoRegistry::default());
+    registry.insert("revoked-sender").unwrap();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let backend = Arc::new(StopFenceBackend {
+        started: started_tx,
+        release: Mutex::new(release_rx),
+        interrupts: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let stop_registry = Arc::clone(&registry);
+    let stop_backend = Arc::clone(&backend);
+    let stopper =
+        thread::spawn(move || stop_registry.close_session(stop_backend.as_ref(), "revoked-sender"));
+    started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+    let interrupt_registry = Arc::clone(&registry);
+    let interrupt_backend = Arc::clone(&backend);
+    let (done_tx, done_rx) = mpsc::channel();
+    let interrupter = thread::spawn(move || {
+        done_tx
+            .send(
+                interrupt_registry
+                    .interrupt_session(Some(interrupt_backend.as_ref()), "revoked-sender"),
+            )
+            .unwrap();
+    });
+    // While STOP is in flight, interrupt must not be delivered to the sender.
+    assert!(done_rx.recv_timeout(Duration::from_millis(80)).is_err());
+    assert_eq!(backend.interrupts.load(Ordering::SeqCst), 0);
+    release_tx.send(()).unwrap();
+    stopper.join().unwrap().unwrap();
+    interrupter.join().unwrap();
+    assert_eq!(
+        done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap_err()
+            .kind,
+        ProviderErrorKind::Unavailable
+    );
+    assert_eq!(backend.interrupts.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn echo_stop_waits_for_in_flight_private_open_before_forgetting_sender() {
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    struct DelayedOpen {
+        started: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+        stops: std::sync::atomic::AtomicUsize,
+    }
+    impl DidEchoBackend for DelayedOpen {
+        fn open(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            self.started.send(()).unwrap();
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap();
+            Ok(())
+        }
+        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Err(unavailable())
+        }
+        fn stop(&self, _: &str) -> Result<(), ProviderError> {
+            self.stops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    let registry = Arc::new(DidEchoRegistry::default());
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let backend = Arc::new(DelayedOpen {
+        started: started_tx,
+        release: Mutex::new(release_rx),
+        stops: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let opening_registry = Arc::clone(&registry);
+    let opening_backend = Arc::clone(&backend);
+    let opening = thread::spawn(move || {
+        opening_registry.open_session(
+            opening_backend.as_ref(),
+            "opening-sender",
+            "wss://livekit.example.test",
+            "private-token",
+            &Probe(AtomicBool::new(false)),
+        )
+    });
+    started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let closing_registry = Arc::clone(&registry);
+    let closing_backend = Arc::clone(&backend);
+    let (done_tx, done_rx) = mpsc::channel();
+    let closing = thread::spawn(move || {
+        done_tx
+            .send(closing_registry.close_session(closing_backend.as_ref(), "opening-sender"))
+            .unwrap();
+    });
+    assert!(done_rx.recv_timeout(Duration::from_millis(80)).is_err());
+    assert_eq!(backend.stops.load(Ordering::SeqCst), 0);
+    release_tx.send(()).unwrap();
+    opening.join().unwrap().unwrap();
+    closing.join().unwrap();
+    done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap()
+        .unwrap();
+    assert_eq!(backend.stops.load(Ordering::SeqCst), 1);
+    assert!(!registry.contains("opening-sender").unwrap());
+}
+
+#[test]
+fn echo_pcm_open_revoked_by_backend_aborts_stream_and_denies_handoff() {
+    use std::sync::Arc;
+
+    struct SharedProbe(Arc<AtomicBool>);
+    impl CancellationProbe for SharedProbe {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+
+    struct PendingStream(Arc<AtomicBool>);
+    impl RealtimeAvatarPcmStream for PendingStream {
+        fn push_pcm(&mut self, _: &[u8], _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn finish(&mut self, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn abort(&mut self) -> Result<(), ProviderError> {
+            self.0.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct RevokingBackend {
+        revoked: Arc<AtomicBool>,
+        aborted: Arc<AtomicBool>,
+    }
+    impl DidEchoBackend for RevokingBackend {
+        fn open(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn stop(&self, _: &str) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn open_pcm_stream(
+            &self,
+            _: &str,
+            _: u32,
+            _: u16,
+            _: &dyn CancellationProbe,
+        ) -> Result<Box<dyn RealtimeAvatarPcmStream>, ProviderError> {
+            self.revoked.store(true, Ordering::SeqCst);
+            Ok(Box::new(PendingStream(Arc::clone(&self.aborted))))
+        }
+    }
+
+    let revoked = Arc::new(AtomicBool::new(false));
+    let aborted = Arc::new(AtomicBool::new(false));
+    let backend = Arc::new(RevokingBackend {
+        revoked: Arc::clone(&revoked),
+        aborted: Arc::clone(&aborted),
+    });
+    let provider = adapter("http://127.0.0.1:1".to_owned()).with_echo_backend(backend);
+    provider.echo_sessions.insert("echo-session-1").unwrap();
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "echo-session-1".to_owned(),
+        provider_session_id: "echo-session-1".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+    let probe = SharedProbe(Arc::clone(&revoked));
+    let error = match provider.open_pcm_stream(&session, 24000, 1, &probe) {
+        Ok(_) => panic!("revoked private stream must never be returned"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert!(aborted.load(Ordering::SeqCst));
 }

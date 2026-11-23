@@ -1,5 +1,5 @@
-use std::collections::HashSet;
-use std::sync::Mutex;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, Weak};
 
 use vpr_integration::{CancellationProbe, ProviderError, RealtimeAvatarPcmStream};
 
@@ -110,6 +110,10 @@ pub trait DidEchoBackend: Send + Sync {
 #[derive(Default)]
 pub(crate) struct DidEchoRegistry {
     sessions: Mutex<HashSet<String>>,
+    // Weak entries avoid retaining a lock per historical sender indefinitely.
+    // Only the same session ID is serialized; a stalled STOP cannot hold the
+    // registry-wide session lock or block another session's teardown.
+    stop_locks: Mutex<HashMap<String, Weak<Mutex<()>>>>,
 }
 
 impl DidEchoRegistry {
@@ -131,6 +135,11 @@ impl DidEchoRegistry {
         if cancellation.is_cancelled() {
             return Err(super::cancelled());
         }
+        // Serialize OPEN with STOP/interrupt for this identity. Otherwise a
+        // concurrent STOP could forget the reservation while backend.open is
+        // still connecting, leaving a live untracked publisher after OPEN.
+        let session_lock = self.session_stop_lock(id)?;
+        let _guard = session_lock.lock().map_err(|_| super::invalid_response())?;
         self.insert(id)?;
         // A revoke can land while the identity reservation lock is acquired.
         // No private transport exists yet, so release this reservation and
@@ -149,13 +158,13 @@ impl DidEchoRegistry {
             if matches!(backend.sender_definitely_absent(id), Ok(true)) {
                 self.remove(id)?;
             } else {
-                let _ = self.close_session(backend, id);
+                let _ = self.close_session_locked(backend, id);
             }
             return Err(error);
         }
         if cancellation.is_cancelled() {
             // Revocation after OPEN must never discard an unconfirmed sender.
-            self.close_session(backend, id)?;
+            self.close_session_locked(backend, id)?;
             return Err(super::cancelled());
         }
         Ok(())
@@ -168,6 +177,10 @@ impl DidEchoRegistry {
         id: &str,
     ) -> Result<(), ProviderError> {
         let backend = backend.ok_or_else(super::unavailable)?;
+        // An interrupt must not overtake final STOP or reach a sender after
+        // teardown. Share the same per-session serialization as close_session.
+        let session_lock = self.session_stop_lock(id)?;
+        let _guard = session_lock.lock().map_err(|_| super::invalid_response())?;
         if !self.contains(id)? {
             return Err(super::unavailable());
         }
@@ -195,14 +208,48 @@ impl DidEchoRegistry {
         backend: &dyn DidEchoBackend,
         id: &str,
     ) -> Result<(), ProviderError> {
+        let stop_lock = self.session_stop_lock(id)?;
+        let _stop_guard = stop_lock.lock().map_err(|_| super::invalid_response())?;
+        self.close_session_locked(backend, id)
+    }
+
+    // Caller owns the per-session fence; OPEN must not recursively lock it.
+    fn close_session_locked(
+        &self,
+        backend: &dyn DidEchoBackend,
+        id: &str,
+    ) -> Result<(), ProviderError> {
+        // Recheck AFTER acquiring the per-session lock: a concurrent caller
+        // may already have received STOP, forgotten and removed this sender.
         if !self.contains(id)? {
             return Ok(());
         }
-        // If STOP is unconfirmed, retain the only known sender identity:
-        // forgetting it would make follow-up cleanup impossible.
+        // Failed or uncertain STOP keeps the identity for a later retry.
+        // Never hold the global registry lock across provider network I/O.
         backend.stop(id)?;
         backend.forget(id)?;
         self.remove(id)
+    }
+
+    /// Acquire the canonical per-sender egress fence. STOP and interrupt
+    /// share this lock so no late interrupt can follow a confirmed STOP.
+    fn session_stop_lock(&self, id: &str) -> Result<Arc<Mutex<()>>, ProviderError> {
+        let stop_lock = {
+            let mut locks = self
+                .stop_locks
+                .lock()
+                .map_err(|_| super::invalid_response())?;
+            // Bound the map to currently active callers, not historical IDs.
+            locks.retain(|_, weak| weak.strong_count() > 0);
+            if let Some(existing) = locks.get(id).and_then(Weak::upgrade) {
+                existing
+            } else {
+                let fresh = Arc::new(Mutex::new(()));
+                locks.insert(id.to_owned(), Arc::downgrade(&fresh));
+                fresh
+            }
+        };
+        Ok(stop_lock)
     }
 
     pub(crate) fn contains(&self, id: &str) -> Result<bool, ProviderError> {

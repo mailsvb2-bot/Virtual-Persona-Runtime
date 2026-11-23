@@ -355,7 +355,15 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
                 return Err(policy_denied());
             }
             let backend = self.echo_backend.as_ref().ok_or_else(policy_denied)?;
-            return backend.speak(&session.provider_session_id, text, cancellation);
+            backend.speak(&session.provider_session_id, text, cancellation)?;
+            // A revoke may arrive while the backend is publishing. Never
+            // acknowledge playback as successful after authority was lost.
+            // Remote transport cancellation remains the backend's obligation.
+            Self::ensure_active(cancellation)?;
+            if !self.echo_sessions.contains(&session.provider_session_id)? {
+                return Err(policy_denied());
+            }
+            return Ok(());
         }
         if self.echo_backend.is_some() {
             return Err(policy_denied());
@@ -400,12 +408,27 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             return Err(policy_denied());
         }
         let backend = self.echo_backend.as_ref().ok_or_else(policy_denied)?;
-        backend.open_pcm_stream(
+        let stream = backend.open_pcm_stream(
             &session.provider_session_id,
             sample_rate_hz,
             channels,
             cancellation,
-        )
+        )?;
+        // Opening the private publisher can block while STOP/revoke races it.
+        // Never hand an already-revoked stream to the caller. Dropping it
+        // releases its local transport resources; remote STOP remains a
+        // separate provider acknowledgement requirement.
+        if cancellation.is_cancelled() {
+            let mut stream = stream;
+            let _ = stream.abort();
+            return Err(cancelled());
+        }
+        if !self.echo_sessions.contains(&session.provider_session_id)? {
+            let mut stream = stream;
+            let _ = stream.abort();
+            return Err(policy_denied());
+        }
+        Ok(stream)
     }
 
     fn speak_audio_url(
