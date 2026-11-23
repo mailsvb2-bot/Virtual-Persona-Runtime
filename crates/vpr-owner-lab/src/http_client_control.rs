@@ -251,7 +251,41 @@ pub(super) fn route_post(
                     &state.voice_cancel_requested,
                 );
                 reject_if_session_ending(state)?;
+                // Read the previously authorized suffix under the short replay lock.
+                // Never hold this lock across TTS or provider I/O: owner revoke
+                // needs the same lock to set the termination intent and fence
+                // the shared runtime authority immediately.
+                let suffix = {
+                    let source = state.replay_source.lock();
+                    let reply = source
+                        .as_ref()
+                        .ok_or_else(|| super::error_response(409, "INVALID_STATE_TRANSITION"))?;
+                    if reply.request_sequence != body.request_sequence
+                        || !reply.interrupted
+                        || reply.resume_count >= MAX_RESUMES_PER_REPLY
+                    {
+                        return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+                    }
+                    match body.character_offset {
+                        Some(offset) => authorized_character_suffix(&reply.reply, offset),
+                        None => authorized_sentence_suffix(&reply.reply, body.sentence_index),
+                    }
+                    .ok_or_else(|| super::error_response(400, "INVALID_INPUT"))?
+                };
+                let result = with_engine_result(state, |engine| {
+                    if engine.status().session_state != "active" {
+                        return Err(vpr_owner_lab::LabError::InvalidState);
+                    }
+                    engine
+                        .prepare_resumed_speech(&suffix)
+                        .map(|response| super::json_response(200, &response))
+                })?;
+                // Reacquire the replay lock and validate the same generation
+                // before committing consumption. A concurrent owner revoke
+                // clears the source while holding this lock. It may also have
+                // revoked authority during the slow provider operation.
                 let mut source = state.replay_source.lock();
+                reject_if_session_ending(state)?;
                 let reply = source
                     .as_mut()
                     .ok_or_else(|| super::error_response(409, "INVALID_STATE_TRANSITION"))?;
@@ -261,23 +295,6 @@ pub(super) fn route_post(
                 {
                     return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
                 }
-                let suffix = match body.character_offset {
-                    Some(offset) => authorized_character_suffix(&reply.reply, offset),
-                    None => authorized_sentence_suffix(&reply.reply, body.sentence_index),
-                }
-                .ok_or_else(|| super::error_response(400, "INVALID_INPUT"))?;
-                let result = with_engine_result(state, |engine| {
-                    if engine.status().session_state != "active" {
-                        return Err(vpr_owner_lab::LabError::InvalidState);
-                    }
-                    engine
-                        .prepare_resumed_speech(&suffix)
-                        .map(|response| super::json_response(200, &response))
-                })?;
-                // End-session writes the atomic intent BEFORE acquiring replay_source.
-                // Reject a revoke that began during the potentially slow provider
-                // preparation, rather than handing its command to the browser.
-                reject_if_session_ending(state)?;
                 reply.resume_count += 1;
                 reply.interrupted = false;
                 Ok(result)
