@@ -1,4 +1,6 @@
 //! Canonical voice completion and replay fencing for the originating RT0 session.
+use std::sync::atomic::Ordering;
+
 use super::{AppState, VoiceStreamEvent};
 use vpr_owner_lab::{LabError, LabVoiceResult};
 
@@ -17,6 +19,20 @@ pub(super) fn prepare_voice_terminal_event(
         &state.session_end_requested,
         session_sequence,
     ) else {
+        // Revocation denies replay, but the originating voice attempt must
+        // still become terminal before the same session's evidence is sealed.
+        // Guard generation and recorder mutation with replay_source: a late
+        // worker must never alter a newer session after its state is reused.
+        let _replay = state.replay_source.lock();
+        if session_sequence != 0
+            && state.active_session_sequence.load(Ordering::Acquire) == session_sequence
+            && state.session_end_requested.load(Ordering::Acquire)
+        {
+            let _ = state
+                .evidence
+                .lock()
+                .fail_voice_request(request_sequence, "AUTH_REVOKED");
+        }
         return VoiceStreamEvent::Failed {
             code: "INVALID_STATE_TRANSITION".to_owned(),
             diagnostic: None,
