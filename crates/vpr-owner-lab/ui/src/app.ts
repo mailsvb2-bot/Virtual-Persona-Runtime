@@ -3054,6 +3054,7 @@ const interruptAndOfferResume = async (): Promise<void> => {
       // the server-held original request before exposing replay to the owner.
       // This is NOT proof that the provider finished audible playback.
       await api<{ ok: true }>("/api/avatar/confirm-interruption", {
+        expected_session_sequence: evidenceSessionSequence,
         request_sequence: resumeSourceRequest,
       });
       offerInterruptedAnswer(sentences, elapsed, offset);
@@ -3119,6 +3120,7 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
     // The browser sends no text to the backend: suffix selection uses the original
     // canonical response retained only in per-session server memory.
     prepared = await api<ResumedSpeech>("/api/avatar/resume-answer", {
+      expected_session_sequence: evidenceSessionSequence,
       request_sequence: resumeSourceRequest,
       sentence_index: index,
       ...(manualCursorOffset !== null ? { character_offset: manualCursorOffset } : {}),
