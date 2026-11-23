@@ -14,12 +14,12 @@ use super::{
 
 #[path = "http_voice_event.rs"]
 mod voice_event;
-#[path = "http_voice_trace.rs"]
-mod voice_trace;
 #[path = "http_voice_terminal.rs"]
 mod voice_terminal;
-use voice_terminal::prepare_voice_terminal_event;
+#[path = "http_voice_trace.rs"]
+mod voice_trace;
 use voice_event::VoiceStreamEvent;
+use voice_terminal::prepare_voice_terminal_event;
 #[path = "http_voice_stream.rs"]
 mod voice_stream;
 #[cfg(test)]
@@ -455,12 +455,8 @@ fn spawn_voice_worker(
             voice_trace::completed(session_sequence, request_sequence);
         }
         *worker_state.active_voice_interrupt.lock() = None;
-        let terminal = prepare_voice_terminal_event(
-            &worker_state,
-            session_sequence,
-            request_sequence,
-            result,
-        );
+        let terminal =
+            prepare_voice_terminal_event(&worker_state, session_sequence, request_sequence, result);
         worker_state.voice_streams.finish_with_unlock(
             session_sequence,
             request_sequence,
