@@ -452,7 +452,12 @@ fn spawn_voice_worker(
             voice_trace::completed(session_sequence, request_sequence);
         }
         *worker_state.active_voice_interrupt.lock() = None;
-        let terminal = prepare_voice_terminal_event(&worker_state, request_sequence, result);
+        let terminal = prepare_voice_terminal_event(
+            &worker_state,
+            session_sequence,
+            request_sequence,
+            result,
+        );
         worker_state.voice_streams.finish_with_unlock(
             session_sequence,
             request_sequence,
@@ -551,10 +556,23 @@ pub(super) fn events_response(
 
 fn prepare_voice_terminal_event(
     state: &AppState,
+    session_sequence: u64,
     request_sequence: u64,
     result: Result<LabVoiceResult, LabError>,
 ) -> VoiceStreamEvent {
-    *state.replay_source.lock() = None;
+    // Session registration and teardown also hold replay_source while updating
+    // the generation. Keep this guard through terminal evidence/replay commit:
+    // an old worker must neither clear nor repopulate a new session's reply.
+    let mut replay = state.replay_source.lock();
+    if state.active_session_sequence.load(Ordering::Acquire) != session_sequence
+        || state.session_end_requested.load(Ordering::Acquire)
+    {
+        return VoiceStreamEvent::Failed {
+            code: "INVALID_STATE_TRANSITION".to_owned(),
+            diagnostic: None,
+        };
+    }
+    *replay = None;
     match result {
         Ok(value) => match state
             .evidence
@@ -562,8 +580,8 @@ fn prepare_voice_terminal_event(
             .complete_voice_request(request_sequence, &value)
         {
             Ok(()) => {
-                super::http_client_control::retain_completed_reply(
-                    &state.replay_source,
+                super::http_client_control::retain_completed_reply_locked(
+                    &mut replay,
                     &state.session_end_requested,
                     request_sequence,
                     &value.reply,
