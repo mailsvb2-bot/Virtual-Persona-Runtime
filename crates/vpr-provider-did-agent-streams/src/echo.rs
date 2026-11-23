@@ -214,9 +214,7 @@ impl DidEchoRegistry {
                 fresh
             }
         };
-        let _stop_guard = stop_lock
-            .lock()
-            .map_err(|_| super::invalid_response())?;
+        let _stop_guard = stop_lock.lock().map_err(|_| super::invalid_response())?;
         // Recheck AFTER acquiring the per-session lock: a concurrent caller
         // may already have received STOP, forgotten and removed this sender.
         if !self.contains(id)? {
