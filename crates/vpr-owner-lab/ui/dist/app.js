@@ -704,18 +704,30 @@ const readAvSyncOffsetMillis = async (state) => {
     const currentPeer = peer;
     let audioSelection;
     let videoSelection;
+    audioSelection = selectPlayoutTimestamp(undefined, "audio", state.audioPackets);
+    videoSelection = selectPlayoutTimestamp(undefined, "video", state.videoPackets);
     if (currentPeer) {
-        const stats = await currentPeer.getStats();
-        audioSelection = selectPlayoutTimestamp(stats, "audio", state.audioPackets);
-        videoSelection = selectPlayoutTimestamp(stats, "video", state.videoPackets);
+        try {
+            const stats = await currentPeer.getStats();
+            audioSelection = selectPlayoutTimestamp(stats, "audio", state.audioPackets);
+            videoSelection = selectPlayoutTimestamp(stats, "video", state.videoPackets);
+        }
+        catch {
+        }
     }
-    else {
+    if (audioSelection.timestamp === null || videoSelection.timestamp === null) {
         const [audio, videoStats] = await Promise.all([
             readLiveKitTrackPlayout(liveKitAudioTrack, "audio", state.audioPackets),
             readLiveKitTrackPlayout(liveKitVideoTrack, "video", state.videoPackets),
         ]);
-        audioSelection = audio;
-        videoSelection = videoStats;
+        if (audioSelection.timestamp === null
+            && (audio.timestamp !== null || audioSelection.issue === "stats_unavailable")) {
+            audioSelection = audio;
+        }
+        if (videoSelection.timestamp === null
+            && (videoStats.timestamp !== null || videoSelection.issue === "stats_unavailable")) {
+            videoSelection = videoStats;
+        }
     }
     audioSelection = requireAdvancingPlayoutClock(audioSelection, state.lastAudioPlayoutTimestamp, "audio");
     videoSelection = requireAdvancingPlayoutClock(videoSelection, state.lastVideoPlayoutTimestamp, "video");
@@ -2536,6 +2548,7 @@ const interruptAndOfferResume = async () => {
                 if (resumeSourceRequest === null)
                     throw new Error("RESUME_SOURCE_UNAVAILABLE");
                 await api("/api/avatar/confirm-interruption", {
+                    expected_session_sequence: evidenceSessionSequence,
                     request_sequence: resumeSourceRequest,
                 });
                 offerInterruptedAnswer(sentences, elapsed, offset);
@@ -2589,6 +2602,7 @@ const resumeInterruptedAnswer = async () => {
         if (resumeSourceRequest === null)
             throw new Error("RESUME_SOURCE_UNAVAILABLE");
         prepared = await api("/api/avatar/resume-answer", {
+            expected_session_sequence: evidenceSessionSequence,
             request_sequence: resumeSourceRequest,
             sentence_index: index,
             ...(manualCursorOffset !== null ? { character_offset: manualCursorOffset } : {}),

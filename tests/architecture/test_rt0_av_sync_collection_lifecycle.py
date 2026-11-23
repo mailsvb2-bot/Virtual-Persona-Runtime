@@ -20,6 +20,22 @@ class RTPCollectionLifecycleTest(unittest.TestCase):
                 self.assertIn('"/api/evidence/av-sync"', block)
                 self.assertIn('"/api/evidence/av-sync-diagnostic"', block)
 
+    def test_peer_stats_failure_recovers_only_real_receiver_playout_stats(self):
+        for path in (SRC, DIST):
+            with self.subTest(path=path):
+                code = path.read_text(encoding="utf-8")
+                begin = code.index("const readAvSyncOffsetMillis =")
+                end = code.index("const collectAvSyncEvidence =", begin)
+                block = code[begin:end]
+                self.assertIn("try {", block)
+                self.assertIn("currentPeer.getStats()", block)
+                self.assertIn("readLiveKitTrackPlayout(liveKitAudioTrack", block)
+                self.assertIn("readLiveKitTrackPlayout(liveKitVideoTrack", block)
+                self.assertLess(block.index("currentPeer.getStats()"),
+                                block.index("readLiveKitTrackPlayout(liveKitAudioTrack"))
+                self.assertIn("requireAdvancingPlayoutClock", block)
+                self.assertIn("mediaElementAvSyncFallback", block)
+
     def test_older_collection_cannot_clear_newer_busy_flag(self):
         for path in (SRC, DIST):
             with self.subTest(path=path):
