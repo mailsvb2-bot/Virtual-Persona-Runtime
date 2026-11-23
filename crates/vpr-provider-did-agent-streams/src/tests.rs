@@ -2150,6 +2150,7 @@ fn echo_pcm_open_revoked_by_backend_aborts_stream_and_denies_handoff() {
 #[test]
 fn echo_pcm_stream_rechecks_stop_and_cancel_after_backend_write() {
     use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
 
     struct Probe(Arc<AtomicBool>);
     impl CancellationProbe for Probe {
