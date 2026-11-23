@@ -423,24 +423,14 @@ mod resume_tests {
         {
             let mut replay =
                 super::begin_voice_terminal_replay(&source, &active, &ending, 1).unwrap();
-            super::retain_completed_reply_locked(
-                &mut replay,
-                &ending,
-                7,
-                "Старый ответ.",
-            );
+            super::retain_completed_reply_locked(&mut replay, &ending, 7, "Старый ответ.");
         }
         // A new session replaced the cached answer under the same canonical
         // mutex. The old worker's completion is not allowed to clear it.
         {
             let mut replay = source.lock();
             active.store(2, Ordering::Release);
-            super::retain_completed_reply_locked(
-                &mut replay,
-                &ending,
-                8,
-                "Ответ новой сессии.",
-            );
+            super::retain_completed_reply_locked(&mut replay, &ending, 8, "Ответ новой сессии.");
         }
         assert!(super::begin_voice_terminal_replay(&source, &active, &ending, 1).is_none());
         assert_eq!(source.lock().as_ref().unwrap().request_sequence, 8);
