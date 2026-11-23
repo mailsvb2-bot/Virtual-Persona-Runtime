@@ -1235,6 +1235,69 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
 }
 
 #[test]
+fn echo_speech_revoked_inside_backend_never_reports_success() {
+    struct RevokingEchoBackend {
+        revoked: Arc<AtomicBool>,
+    }
+
+    impl DidEchoBackend for RevokingEchoBackend {
+        fn open(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn speak(
+            &self,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            self.revoked.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn stop(&self, _: &str) -> Result<(), ProviderError> {
+            Ok(())
+        }
+    }
+
+    let revoked = Arc::new(AtomicBool::new(false));
+    let backend = Arc::new(RevokingEchoBackend {
+        revoked: Arc::clone(&revoked),
+    });
+    let provider = adapter("http://127.0.0.1:1".to_owned()).with_echo_backend(backend);
+    provider.echo_sessions.insert("echo-session-1").unwrap();
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "echo-session-1".to_owned(),
+        provider_session_id: "echo-session-1".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+    let probe = Probe(AtomicBool::new(false));
+    // Use a shared probe state: the backend flips this flag during publication.
+    // The result must not acknowledge successful playback after revoke.
+    struct SharedProbe(Arc<AtomicBool>);
+    impl CancellationProbe for SharedProbe {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+    let shared = SharedProbe(Arc::clone(&revoked));
+    assert!(!probe.is_cancelled());
+    let error = provider
+        .speak_text(&session, "late speech", &shared)
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+}
+
+#[test]
 fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first() {
     use std::sync::Arc;
 
