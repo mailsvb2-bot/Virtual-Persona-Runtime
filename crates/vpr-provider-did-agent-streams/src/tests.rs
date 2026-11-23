@@ -1727,7 +1727,13 @@ fn concurrent_echo_close_stops_each_sender_once() {
         stops: std::sync::atomic::AtomicUsize,
     }
     impl DidEchoBackend for SlowStop {
-        fn open(&self, _: &str, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+        fn open(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
             Ok(())
         }
         fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
@@ -1746,15 +1752,19 @@ fn concurrent_echo_close_stops_each_sender_once() {
     });
     registry.insert("same-sender").unwrap();
     let barrier = Arc::new(Barrier::new(9));
-    let workers: Vec<_> = (0..8).map(|_| {
-        let registry = Arc::clone(&registry);
-        let backend = Arc::clone(&backend);
-        let barrier = Arc::clone(&barrier);
-        thread::spawn(move || {
-            barrier.wait();
-            registry.close_session(backend.as_ref(), "same-sender").unwrap();
+    let workers: Vec<_> = (0..8)
+        .map(|_| {
+            let registry = Arc::clone(&registry);
+            let backend = Arc::clone(&backend);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                registry
+                    .close_session(backend.as_ref(), "same-sender")
+                    .unwrap();
+            })
         })
-    }).collect();
+        .collect();
     barrier.wait();
     for worker in workers {
         worker.join().unwrap();
@@ -1773,7 +1783,13 @@ fn blocked_echo_stop_does_not_block_another_sender() {
         release: std::sync::Mutex<mpsc::Receiver<()>>,
     }
     impl DidEchoBackend for BlockingStop {
-        fn open(&self, _: &str, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+        fn open(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
             Ok(())
         }
         fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
@@ -1782,7 +1798,11 @@ fn blocked_echo_stop_does_not_block_another_sender() {
         fn stop(&self, id: &str) -> Result<(), ProviderError> {
             if id == "blocked" {
                 self.started.send(()).unwrap();
-                self.release.lock().unwrap().recv_timeout(Duration::from_secs(3)).unwrap();
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(3))
+                    .unwrap();
             }
             Ok(())
         }
@@ -1799,23 +1819,25 @@ fn blocked_echo_stop_does_not_block_another_sender() {
     });
     let blocked_registry = Arc::clone(&registry);
     let blocked_backend = Arc::clone(&backend);
-    let blocked = thread::spawn(move || {
-        blocked_registry.close_session(blocked_backend.as_ref(), "blocked")
-    });
+    let blocked =
+        thread::spawn(move || blocked_registry.close_session(blocked_backend.as_ref(), "blocked"));
     started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
 
     let independent_registry = Arc::clone(&registry);
     let independent_backend = Arc::clone(&backend);
     let (done_tx, done_rx) = mpsc::channel();
     let independent = thread::spawn(move || {
-        let result = independent_registry.close_session(independent_backend.as_ref(), "independent");
+        let result =
+            independent_registry.close_session(independent_backend.as_ref(), "independent");
         done_tx.send(result).unwrap();
     });
     let independent_result = done_rx.recv_timeout(Duration::from_secs(2));
     release_tx.send(()).unwrap();
     blocked.join().unwrap().unwrap();
     independent.join().unwrap();
-    independent_result.expect("independent STOP blocked by unrelated sender").unwrap();
+    independent_result
+        .expect("independent STOP blocked by unrelated sender")
+        .unwrap();
     assert!(!registry.contains("blocked").unwrap());
     assert!(!registry.contains("independent").unwrap());
 }
