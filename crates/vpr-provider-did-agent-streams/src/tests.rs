@@ -1922,3 +1922,76 @@ fn echo_interrupt_cannot_overtake_in_flight_final_stop() {
     );
     assert_eq!(backend.interrupts.load(Ordering::SeqCst), 0);
 }
+
+#[test]
+fn echo_stop_waits_for_in_flight_private_open_before_forgetting_sender() {
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    struct DelayedOpen {
+        started: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+        stops: std::sync::atomic::AtomicUsize,
+    }
+    impl DidEchoBackend for DelayedOpen {
+        fn open(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            self.started.send(()).unwrap();
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap();
+            Ok(())
+        }
+        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Err(unavailable())
+        }
+        fn stop(&self, _: &str) -> Result<(), ProviderError> {
+            self.stops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    let registry = Arc::new(DidEchoRegistry::default());
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let backend = Arc::new(DelayedOpen {
+        started: started_tx,
+        release: Mutex::new(release_rx),
+        stops: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let opening_registry = Arc::clone(&registry);
+    let opening_backend = Arc::clone(&backend);
+    let opening = thread::spawn(move || {
+        opening_registry.open_session(
+            opening_backend.as_ref(),
+            "opening-sender",
+            "wss://livekit.example.test",
+            "private-token",
+            &Probe(AtomicBool::new(false)),
+        )
+    });
+    started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let closing_registry = Arc::clone(&registry);
+    let closing_backend = Arc::clone(&backend);
+    let (done_tx, done_rx) = mpsc::channel();
+    let closing = thread::spawn(move || {
+        done_tx
+            .send(closing_registry.close_session(closing_backend.as_ref(), "opening-sender"))
+            .unwrap();
+    });
+    assert!(done_rx.recv_timeout(Duration::from_millis(80)).is_err());
+    assert_eq!(backend.stops.load(Ordering::SeqCst), 0);
+    release_tx.send(()).unwrap();
+    opening.join().unwrap().unwrap();
+    closing.join().unwrap();
+    done_rx.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
+    assert_eq!(backend.stops.load(Ordering::SeqCst), 1);
+    assert!(!registry.contains("opening-sender").unwrap());
+}
