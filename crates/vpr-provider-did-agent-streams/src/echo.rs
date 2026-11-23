@@ -172,6 +172,10 @@ impl DidEchoRegistry {
         id: &str,
     ) -> Result<(), ProviderError> {
         let backend = backend.ok_or_else(super::unavailable)?;
+        // An interrupt must not overtake final STOP or reach a sender after
+        // teardown. Share the same per-session serialization as close_session.
+        let session_lock = self.session_stop_lock(id)?;
+        let _guard = session_lock.lock().map_err(|_| super::invalid_response())?;
         if !self.contains(id)? {
             return Err(super::unavailable());
         }
@@ -199,6 +203,23 @@ impl DidEchoRegistry {
         backend: &dyn DidEchoBackend,
         id: &str,
     ) -> Result<(), ProviderError> {
+        let stop_lock = self.session_stop_lock(id)?;
+        let _stop_guard = stop_lock.lock().map_err(|_| super::invalid_response())?;
+        // Recheck AFTER acquiring the per-session lock: a concurrent caller
+        // may already have received STOP, forgotten and removed this sender.
+        if !self.contains(id)? {
+            return Ok(());
+        }
+        // Failed or uncertain STOP keeps the identity for a later retry.
+        // Never hold the global registry lock across provider network I/O.
+        backend.stop(id)?;
+        backend.forget(id)?;
+        self.remove(id)
+    }
+
+    /// Acquire the canonical per-sender egress fence. STOP and interrupt
+    /// share this lock so no late interrupt can follow a confirmed STOP.
+    fn session_stop_lock(&self, id: &str) -> Result<Arc<Mutex<()>>, ProviderError> {
         let stop_lock = {
             let mut locks = self
                 .stop_locks
@@ -214,17 +235,7 @@ impl DidEchoRegistry {
                 fresh
             }
         };
-        let _stop_guard = stop_lock.lock().map_err(|_| super::invalid_response())?;
-        // Recheck AFTER acquiring the per-session lock: a concurrent caller
-        // may already have received STOP, forgotten and removed this sender.
-        if !self.contains(id)? {
-            return Ok(());
-        }
-        // Failed or uncertain STOP keeps the identity for a later retry.
-        // Never hold the global registry lock across provider network I/O.
-        backend.stop(id)?;
-        backend.forget(id)?;
-        self.remove(id)
+        Ok(stop_lock)
     }
 
     pub(crate) fn contains(&self, id: &str) -> Result<bool, ProviderError> {
