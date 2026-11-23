@@ -1253,18 +1253,20 @@ fn echo_speech_revoked_inside_backend_never_reports_success() {
             Ok(())
         }
 
-        fn speak(
-            &self,
-            _: &str,
-            _: &str,
-            _: &dyn CancellationProbe,
-        ) -> Result<(), ProviderError> {
+        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
             self.revoked.store(true, Ordering::SeqCst);
             Ok(())
         }
 
         fn stop(&self, _: &str) -> Result<(), ProviderError> {
             Ok(())
+        }
+    }
+
+    struct SharedProbe(Arc<AtomicBool>);
+    impl CancellationProbe for SharedProbe {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::SeqCst)
         }
     }
 
@@ -1284,12 +1286,6 @@ fn echo_speech_revoked_inside_backend_never_reports_success() {
     };
     // Use a shared probe state: the backend flips this flag during publication.
     // The result must not acknowledge successful playback after revoke.
-    struct SharedProbe(Arc<AtomicBool>);
-    impl CancellationProbe for SharedProbe {
-        fn is_cancelled(&self) -> bool {
-            self.0.load(Ordering::SeqCst)
-        }
-    }
     let shared = SharedProbe(Arc::clone(&revoked));
     assert!(!shared.is_cancelled());
     let error = provider
