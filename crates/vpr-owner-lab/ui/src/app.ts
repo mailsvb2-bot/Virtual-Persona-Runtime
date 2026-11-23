@@ -1035,8 +1035,14 @@ const readAvSyncOffsetMillis = async (
       readLiveKitTrackPlayout(liveKitAudioTrack, "audio", state.audioPackets),
       readLiveKitTrackPlayout(liveKitVideoTrack, "video", state.videoPackets),
     ]);
-    if (audioSelection.timestamp === null && audio.timestamp !== null) audioSelection = audio;
-    if (videoSelection.timestamp === null && videoStats.timestamp !== null) videoSelection = videoStats;
+    if (audioSelection.timestamp === null
+        && (audio.timestamp !== null || audioSelection.issue === "stats_unavailable")) {
+      audioSelection = audio;
+    }
+    if (videoSelection.timestamp === null
+        && (videoStats.timestamp !== null || videoSelection.issue === "stats_unavailable")) {
+      videoSelection = videoStats;
+    }
   }
 
   audioSelection = requireAdvancingPlayoutClock(audioSelection, state.lastAudioPlayoutTimestamp, "audio");
