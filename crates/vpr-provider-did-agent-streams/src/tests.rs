@@ -1,5 +1,5 @@
-use super::*;
 use super::echo_pcm::RevocableEchoPcmStream;
+use super::*;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
