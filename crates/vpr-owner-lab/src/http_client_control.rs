@@ -411,6 +411,46 @@ mod resume_tests {
     }
 
     #[test]
+    fn late_previous_session_terminal_cannot_clear_or_reauthorize_new_reply() {
+        use parking_lot::Mutex;
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+        let source = Mutex::new(None);
+        let active = AtomicU64::new(1);
+        let ending = AtomicBool::new(false);
+
+        {
+            let mut replay =
+                super::begin_voice_terminal_replay(&source, &active, &ending, 1).unwrap();
+            super::retain_completed_reply_locked(
+                &mut replay,
+                &ending,
+                7,
+                "Старый ответ.",
+            );
+        }
+        // A new session replaced the cached answer under the same canonical
+        // mutex. The old worker's completion is not allowed to clear it.
+        {
+            let mut replay = source.lock();
+            active.store(2, Ordering::Release);
+            super::retain_completed_reply_locked(
+                &mut replay,
+                &ending,
+                8,
+                "Ответ новой сессии.",
+            );
+        }
+        assert!(super::begin_voice_terminal_replay(&source, &active, &ending, 1).is_none());
+        assert_eq!(source.lock().as_ref().unwrap().request_sequence, 8);
+        assert_eq!(source.lock().as_ref().unwrap().reply, "Ответ новой сессии.");
+
+        ending.store(true, Ordering::Release);
+        assert!(super::begin_voice_terminal_replay(&source, &active, &ending, 2).is_none());
+        assert!(super::begin_voice_terminal_replay(&source, &active, &ending, 0).is_none());
+    }
+
+    #[test]
     fn replay_cursor_never_splits_dates_decimals_or_attached_words() {
         let reply = "Встреча 12.10.2026 и оценка 3.14. Следующий пункт.";
         for prefix in [
