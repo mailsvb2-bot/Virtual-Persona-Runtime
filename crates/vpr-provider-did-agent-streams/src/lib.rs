@@ -107,7 +107,7 @@ pub struct DidAgentStreamsAvatar {
     base_url: reqwest::Url,
     client_control: DidClientControlRegistry,
     echo_backend: Option<Arc<dyn DidEchoBackend>>,
-    echo_sessions: DidEchoRegistry,
+    echo_sessions: Arc<DidEchoRegistry>,
 }
 
 impl DidAgentStreamsAvatar {
@@ -128,7 +128,7 @@ impl DidAgentStreamsAvatar {
             base_url,
             client_control: DidClientControlRegistry::default(),
             echo_backend: None,
-            echo_sessions: DidEchoRegistry::default(),
+            echo_sessions: Arc::new(DidEchoRegistry::default()),
         })
     }
 
@@ -248,6 +248,59 @@ impl DidAgentStreamsAvatar {
         } else {
             Ok(())
         }
+    }
+}
+
+/// A private PCM stream retains the same Echo registration as the parent adapter.
+/// A successful backend call is never acknowledged after STOP or cancellation.
+/// The backend remains responsible for interrupting in-flight network I/O.
+struct RevocableEchoPcmStream {
+    inner: Box<dyn RealtimeAvatarPcmStream>,
+    sessions: Arc<DidEchoRegistry>,
+    session_id: String,
+    terminated: bool,
+}
+
+impl RevocableEchoPcmStream {
+    fn check(&mut self, cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
+        if self.terminated {
+            return Err(policy_denied());
+        }
+        if cancellation.is_cancelled() {
+            let _ = self.abort();
+            return Err(cancelled());
+        }
+        if !self.sessions.contains(&self.session_id)? {
+            let _ = self.abort();
+            return Err(policy_denied());
+        }
+        Ok(())
+    }
+}
+
+impl RealtimeAvatarPcmStream for RevocableEchoPcmStream {
+    fn push_pcm(
+        &mut self,
+        pcm: &[u8],
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        self.check(cancellation)?;
+        let result = self.inner.push_pcm(pcm, cancellation);
+        self.check(cancellation)?;
+        result
+    }
+
+    fn finish(&mut self, cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
+        self.check(cancellation)?;
+        let result = self.inner.finish(cancellation);
+        self.check(cancellation)?;
+        self.terminated = true;
+        result
+    }
+
+    fn abort(&mut self) -> Result<(), ProviderError> {
+        self.terminated = true;
+        self.inner.abort()
     }
 }
 
@@ -428,7 +481,12 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             let _ = stream.abort();
             return Err(policy_denied());
         }
-        Ok(stream)
+        Ok(Box::new(RevocableEchoPcmStream {
+            inner: stream,
+            sessions: Arc::clone(&self.echo_sessions),
+            session_id: session.provider_session_id.clone(),
+            terminated: false,
+        }))
     }
 
     fn speak_audio_url(
