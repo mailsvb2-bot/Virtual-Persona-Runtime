@@ -1813,6 +1813,80 @@ fn did_v2_echo_local_stop_does_not_claim_remote_session_stop() {
 }
 
 #[test]
+fn did_v2_opt_in_exact_delete_204_does_not_prove_remote_rtp_stop() {
+    let (endpoint, captured) = serve(vec![("204 No Content", String::new())]);
+    let provider = DidAgentStreamsAvatar::new(
+        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7")
+            .with_v2_delete_on_close(true),
+    )
+    .unwrap();
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "session-delete-test".to_owned(),
+        provider_session_id: "session-delete-test".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+
+    // A DELETE receipt can acknowledge session data removal, but it is NOT
+    // independently measured cessation of both remote audio/video tracks.
+    let error = provider.close_session(&session).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
+    let request = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    assert!(request.starts_with("DELETE /v2/agents/sessions/session-delete-test HTTP/1.1"));
+    assert!(request.to_ascii_lowercase().contains("authorization: basic secret-key"));
+    assert!(!request.contains("viewer-token"));
+}
+
+#[test]
+fn did_v2_opt_in_404_cannot_claim_idempotent_stop() {
+    let (endpoint, captured) = serve(vec![("404 Not Found", String::new())]);
+    let provider = DidAgentStreamsAvatar::new(
+        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7")
+            .with_v2_delete_on_close(true),
+    )
+    .unwrap();
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "session-unknown".to_owned(),
+        provider_session_id: "session-unknown".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+
+    // A 404 after a lost 204 reply may be ambiguous: no inferred success.
+    let error = provider.close_session(&session).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
+    let request = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    assert!(request.starts_with("DELETE /v2/agents/sessions/session-unknown HTTP/1.1"));
+}
+
+#[test]
+fn did_v2_opt_in_delete_refuses_mismatched_session_identity_without_network_io() {
+    let (endpoint, captured) = serve(vec![("204 No Content", String::new())]);
+    let provider = DidAgentStreamsAvatar::new(
+        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7")
+            .with_v2_delete_on_close(true),
+    )
+    .unwrap();
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "resource-other".to_owned(),
+        provider_session_id: "session-delete-test".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+    let error = provider.close_session(&session).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
+    assert!(captured.try_recv().is_err());
+}
+
+#[test]
 fn ambiguous_v2_create_timeout_is_not_marked_retryable() {
     use std::sync::Arc;
     use std::time::Duration;
