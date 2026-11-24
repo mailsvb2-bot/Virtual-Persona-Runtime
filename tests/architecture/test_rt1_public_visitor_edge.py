@@ -21,7 +21,7 @@ STATIC_ROUTES = {
     "/vendor/livekit-client.umd.js",
     "/api/rt1/visitor/bootstrap",
 }
-VISITOR_POST = "(start|answer|ice|text|voice|interrupt|status|close)"
+VISITOR_POST = "(start|answer|ice|text|voice|interrupt|status|close|memory/(consent|erase|revoke|rotate))"
 WORKER_ROUTE = f"^/api/rt1/visitor/{VISITOR_POST}$"
 
 
@@ -52,6 +52,21 @@ class Rt1VisitorPublicEdgeTests(unittest.TestCase):
         self.assertIn('proxy_set_header Forwarded "";', config)
         self.assertIn("proxy_send_timeout 95s;", config)
         self.assertIn("proxy_read_timeout 95s;", config)
+
+    def test_proxy_preserves_canonical_delivery_cancellation(self):
+        config = EDGE.read_text(encoding="utf-8")
+        for directive in (
+            "proxy_buffering off;", "proxy_cache off;",
+            "proxy_ignore_client_abort off;", "proxy_next_upstream off;",
+            "proxy_ignore_headers X-Accel-Buffering;",
+        ):
+            self.assertIn(directive, config)
+        route = re.compile(WORKER_ROUTE)
+        for action in ("consent", "erase", "revoke", "rotate"):
+            self.assertIsNotNone(route.fullmatch("/api/rt1/visitor/memory/" + action))
+        for action in ("connect", "remember", "list", "enroll", "summary/approve"):
+            self.assertIsNone(route.fullmatch("/api/rt1/visitor/memory/" + action))
+        self.assertIsNone(route.fullmatch("/api/rt1/owner/publish"))
 
     def test_public_bootstrap_is_not_owner_lab_bootstrap(self):
         main = MAIN.read_text(encoding="utf-8")
