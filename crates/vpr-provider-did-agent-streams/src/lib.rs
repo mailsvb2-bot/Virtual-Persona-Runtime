@@ -46,6 +46,8 @@ pub struct DidAgentStreamsConfig {
     agent_id: String,
     fluent: bool,
     timeout: Duration,
+    /// Opt-in destructive deletion of V2 session data; 204 is NOT RTP STOP proof.
+    v2_delete_on_close: bool,
 }
 
 impl DidAgentStreamsConfig {
@@ -61,6 +63,7 @@ impl DidAgentStreamsConfig {
             agent_id: agent_id.into(),
             fluent: false,
             timeout: DEFAULT_TIMEOUT,
+            v2_delete_on_close: false,
         }
     }
 
@@ -73,6 +76,15 @@ impl DidAgentStreamsConfig {
     #[must_use]
     pub const fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Opt into D-ID's destructive V2 exact-session DELETE on canonical close.
+    /// This removes provider-side transcript/insights/recording. No DELETE by default.
+    /// Neither HTTP 204 nor 404 proves termination of both RTP publishers.
+    #[must_use]
+    pub const fn with_v2_delete_on_close(mut self, enabled: bool) -> Self {
+        self.v2_delete_on_close = enabled;
         self
     }
 
@@ -164,6 +176,20 @@ impl DidAgentStreamsAvatar {
             let mut segments = url.path_segments_mut().map_err(|()| invalid_response())?;
             segments.pop_if_empty();
             segments.extend(["v2", "agents", self.config.agent_id.as_str(), "sessions"]);
+        }
+        Ok(url)
+    }
+
+    fn v2_exact_session_url(&self, session_id: &str) -> Result<reqwest::Url, ProviderError> {
+        if session_id.is_empty() || session_id.len() > 256 || session_id.chars().any(char::is_control) {
+            return Err(invalid_response());
+        }
+        let mut url = self.base_url.clone();
+        {
+            let mut parts = url.path_segments_mut().map_err(|()| invalid_response())?;
+            parts.pop_if_empty();
+            parts.extend(["v2", "agents", "sessions"]);
+            parts.push(session_id);
         }
         Ok(url)
     }
@@ -559,8 +585,28 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
                     self.echo_sessions
                         .close_session(backend.as_ref(), &session.provider_session_id)?;
                 }
-                // The repository's release contract has no verified D-ID V2
-                // remote termination operation. Preserve an unconfirmed STOP.
+                // D-ID's documented DELETE permanently erases provider-side
+                // transcript, insights and recording. Only explicitly opted-in
+                // operators may perform it. It is the same canonical STOP owner,
+                // never an independent background cleanup path.
+                if self.config.v2_delete_on_close {
+                    let response = self
+                        .authorized(
+                            self.client.delete(
+                                self.v2_exact_session_url(&session.provider_session_id)?,
+                            ),
+                        )
+                        .send()
+                        .map_err(|_| unavailable())?;
+                    // Only 204 is a documented DELETE receipt. 404 after a
+                    // lost reply and all other statuses remain ambiguous.
+                    if response.status().as_u16() != 204 {
+                        return Err(unavailable());
+                    }
+                }
+                // An authenticated DELETE receipt is *not* independent proof
+                // that both remote RTP publishers stopped. Keep the release
+                // gate fail-closed until the independent viewer confirms.
                 Err(unavailable())
             }
             RealtimeAvatarTransport::WebRtc { .. } => {
