@@ -561,10 +561,10 @@ fn did_v2_exact_session_delete_requires_explicit_opt_in_and_never_proves_rtp_sto
             "only the exact opaque session may be deleted"
         );
         assert!(
-            request
-                .to_ascii_lowercase()
-                .contains("authorization: basic secret-key")
-        );
+        request
+            .to_ascii_lowercase()
+            .contains("authorization: basic secret-key")
+    );
         assert!(!request.starts_with("DELETE /agents/"));
     }
 }
@@ -1840,10 +1840,10 @@ fn did_v2_opt_in_exact_delete_204_does_not_prove_remote_rtp_stop() {
         .unwrap();
     assert!(request.starts_with("DELETE /v2/agents/sessions/session-delete-test HTTP/1.1"));
     assert!(
-            request
-                .to_ascii_lowercase()
-                .contains("authorization: basic secret-key")
-        );
+        request
+            .to_ascii_lowercase()
+            .contains("authorization: basic secret-key")
+    );
     assert!(!request.contains("viewer-token"));
 }
 
