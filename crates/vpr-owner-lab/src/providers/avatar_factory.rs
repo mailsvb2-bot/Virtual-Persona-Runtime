@@ -96,7 +96,17 @@ fn build_did_avatar(
     if pcm_tts_enabled && !echo_enabled {
         return Err("canonical TTS requires server-owned D-ID Echo; do not disable Echo".into());
     }
-    let mut backend_fingerprint = vec![endpoint.clone(), agent_id.clone()];
+    // Operational status must reveal when destructive provider-session
+    // deletion is explicitly enabled, without exposing provider secrets.
+    let mut backend_fingerprint = vec![
+        endpoint.clone(),
+        agent_id.clone(),
+        if delete_v2 {
+            "did-v2-session-delete-explicit-opt-in".to_owned()
+        } else {
+            "did-v2-session-delete-disabled".to_owned()
+        },
+    ];
     let provider = if echo_enabled && pcm_tts_enabled {
         let python =
             resolved_value("VPR_DID_ECHO_PYTHON", None).unwrap_or_else(|| "python".to_owned());
