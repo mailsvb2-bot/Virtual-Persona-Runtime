@@ -557,12 +557,14 @@ fn did_v2_exact_session_delete_requires_explicit_opt_in_and_never_proves_rtp_sto
         assert!(!error.retryable);
         let request = captured.recv().unwrap();
         assert!(
-            request.starts_with(
-                "DELETE /v2/agents/sessions/sess%2Fone%3Fvisitor=2 HTTP/1.1"
-            ),
+            request.starts_with("DELETE /v2/agents/sessions/sess%2Fone%3Fvisitor=2 HTTP/1.1"),
             "only the exact opaque session may be deleted"
         );
-        assert!(request.to_ascii_lowercase().contains("authorization: basic secret-key"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: basic secret-key")
+        );
         assert!(!request.starts_with("DELETE /agents/"));
     }
 }
@@ -1816,8 +1818,7 @@ fn did_v2_echo_local_stop_does_not_claim_remote_session_stop() {
 fn did_v2_opt_in_exact_delete_204_does_not_prove_remote_rtp_stop() {
     let (endpoint, captured) = serve(vec![("204 No Content", String::new())]);
     let provider = DidAgentStreamsAvatar::new(
-        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7")
-            .with_v2_delete_on_close(true),
+        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7").with_v2_delete_on_close(true),
     )
     .unwrap();
     let session = RealtimeAvatarSession {
@@ -1834,9 +1835,15 @@ fn did_v2_opt_in_exact_delete_204_does_not_prove_remote_rtp_stop() {
     let error = provider.close_session(&session).unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::Unavailable);
     assert!(!error.retryable);
-    let request = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    let request = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
     assert!(request.starts_with("DELETE /v2/agents/sessions/session-delete-test HTTP/1.1"));
-    assert!(request.to_ascii_lowercase().contains("authorization: basic secret-key"));
+    assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: basic secret-key")
+        );
     assert!(!request.contains("viewer-token"));
 }
 
@@ -1844,8 +1851,7 @@ fn did_v2_opt_in_exact_delete_204_does_not_prove_remote_rtp_stop() {
 fn did_v2_opt_in_404_cannot_claim_idempotent_stop() {
     let (endpoint, captured) = serve(vec![("404 Not Found", String::new())]);
     let provider = DidAgentStreamsAvatar::new(
-        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7")
-            .with_v2_delete_on_close(true),
+        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7").with_v2_delete_on_close(true),
     )
     .unwrap();
     let session = RealtimeAvatarSession {
@@ -1861,7 +1867,9 @@ fn did_v2_opt_in_404_cannot_claim_idempotent_stop() {
     let error = provider.close_session(&session).unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::Unavailable);
     assert!(!error.retryable);
-    let request = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    let request = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
     assert!(request.starts_with("DELETE /v2/agents/sessions/session-unknown HTTP/1.1"));
 }
 
@@ -1869,8 +1877,7 @@ fn did_v2_opt_in_404_cannot_claim_idempotent_stop() {
 fn did_v2_opt_in_delete_refuses_mismatched_session_identity_without_network_io() {
     let (endpoint, captured) = serve(vec![("204 No Content", String::new())]);
     let provider = DidAgentStreamsAvatar::new(
-        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7")
-            .with_v2_delete_on_close(true),
+        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7").with_v2_delete_on_close(true),
     )
     .unwrap();
     let session = RealtimeAvatarSession {
