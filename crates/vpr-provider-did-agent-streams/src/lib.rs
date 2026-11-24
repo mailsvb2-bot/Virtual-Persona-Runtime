@@ -23,6 +23,7 @@ mod protocol;
 mod provider_error;
 mod response_json;
 mod session_creation;
+mod session_termination;
 mod webrtc_creation;
 
 use client_control::DidClientControlRegistry;
@@ -176,20 +177,6 @@ impl DidAgentStreamsAvatar {
             let mut segments = url.path_segments_mut().map_err(|()| invalid_response())?;
             segments.pop_if_empty();
             segments.extend(["v2", "agents", self.config.agent_id.as_str(), "sessions"]);
-        }
-        Ok(url)
-    }
-
-    fn v2_exact_session_url(&self, session_id: &str) -> Result<reqwest::Url, ProviderError> {
-        if session_id.is_empty() || session_id.len() > 256 || session_id.chars().any(char::is_control) {
-            return Err(invalid_response());
-        }
-        let mut url = self.base_url.clone();
-        {
-            let mut parts = url.path_segments_mut().map_err(|()| invalid_response())?;
-            parts.pop_if_empty();
-            parts.extend(["v2", "agents", "sessions"]);
-            parts.push(session_id);
         }
         Ok(url)
     }
@@ -572,43 +559,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
     fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
         Self::validate_session(session)?;
         match session.transport {
-            RealtimeAvatarTransport::LiveKit { .. } => {
-                // V2 session conversion binds both identifiers to the same
-                // provider-issued session id. Refuse mismatched identities.
-                if session.provider_resource_id != session.provider_session_id {
-                    return Err(policy_denied());
-                }
-
-                // Stop the private Echo audio sender when present, but never
-                // equate local Echo closure with D-ID's remote A/V termination.
-                if let Some(backend) = &self.echo_backend {
-                    self.echo_sessions
-                        .close_session(backend.as_ref(), &session.provider_session_id)?;
-                }
-                // D-ID's documented DELETE permanently erases provider-side
-                // transcript, insights and recording. Only explicitly opted-in
-                // operators may perform it. It is the same canonical STOP owner,
-                // never an independent background cleanup path.
-                if self.config.v2_delete_on_close {
-                    let response = self
-                        .authorized(
-                            self.client.delete(
-                                self.v2_exact_session_url(&session.provider_session_id)?,
-                            ),
-                        )
-                        .send()
-                        .map_err(|_| unavailable())?;
-                    // Only 204 is a documented DELETE receipt. 404 after a
-                    // lost reply and all other statuses remain ambiguous.
-                    if response.status().as_u16() != 204 {
-                        return Err(unavailable());
-                    }
-                }
-                // An authenticated DELETE receipt is *not* independent proof
-                // that both remote RTP publishers stopped. Keep the release
-                // gate fail-closed until the independent viewer confirms.
-                Err(unavailable())
-            }
+            RealtimeAvatarTransport::LiveKit { .. } => session_termination::close_v2(self, session),
             RealtimeAvatarTransport::WebRtc { .. } => {
                 let response = self
                     .authorized(
