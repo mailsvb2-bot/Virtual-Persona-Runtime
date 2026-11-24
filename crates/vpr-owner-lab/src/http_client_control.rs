@@ -1,6 +1,6 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use parking_lot::Mutex as ParkingMutex;
+use parking_lot::{Mutex as ParkingMutex, MutexGuard as ParkingMutexGuard};
 
 use serde::Deserialize;
 use tiny_http::Request;
@@ -37,6 +37,8 @@ pub(super) struct AuthorizedReply {
 /// Publish a completed canonical reply only while its session is still live.
 /// Session teardown sets the atomic termination intent before clearing this
 /// cache, so a late STT/LLM completion must not resurrect replay authority.
+// The existing text-completion path uses this mutex-owning helper;
+// voice completion uses the locked variant to fence its session epoch.
 pub(super) fn retain_completed_reply(
     source: &ParkingMutex<Option<AuthorizedReply>>,
     session_end_requested: &AtomicBool,
@@ -44,6 +46,37 @@ pub(super) fn retain_completed_reply(
     reply: &str,
 ) {
     let mut cached = source.lock();
+    retain_completed_reply_locked(&mut cached, session_end_requested, request_sequence, reply);
+}
+
+/// Acquire the existing replay lock and validate the originating session under
+/// that SAME lock used by session registration and revoke. A stale completion
+/// may not remove or overwrite another session's saved answer.
+pub(super) fn begin_voice_terminal_replay<'a>(
+    source: &'a ParkingMutex<Option<AuthorizedReply>>,
+    active_session_sequence: &AtomicU64,
+    session_end_requested: &AtomicBool,
+    expected_session_sequence: u64,
+) -> Option<ParkingMutexGuard<'a, Option<AuthorizedReply>>> {
+    let cached = source.lock();
+    if expected_session_sequence == 0
+        || active_session_sequence.load(Ordering::Acquire) != expected_session_sequence
+        || session_end_requested.load(Ordering::Acquire)
+    {
+        return None;
+    }
+    Some(cached)
+}
+
+/// Called only with the canonical `replay_source` lock held. The voice worker
+/// verifies its session generation while holding this same lock, so an old
+/// result cannot overwrite a newer session's replay entitlement.
+pub(super) fn retain_completed_reply_locked(
+    cached: &mut Option<AuthorizedReply>,
+    session_end_requested: &AtomicBool,
+    request_sequence: u64,
+    reply: &str,
+) {
     if session_end_requested.load(Ordering::Acquire)
         || reply.trim().is_empty()
         || reply.len() > 16_000
@@ -68,6 +101,7 @@ struct GreetingBody {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ResumeAnswerBody {
+    expected_session_sequence: u64,
     request_sequence: u64,
     sentence_index: usize,
     #[serde(default)]
@@ -77,6 +111,7 @@ struct ResumeAnswerBody {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfirmInterruptionBody {
+    expected_session_sequence: u64,
     request_sequence: u64,
 }
 
@@ -165,6 +200,11 @@ fn confirm_interruption(
         return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
     }
     let mut source = state.replay_source.lock();
+    if body.expected_session_sequence == 0
+        || state.active_session_sequence.load(Ordering::Acquire) != body.expected_session_sequence
+    {
+        return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+    }
     let reply = source
         .as_mut()
         .ok_or_else(|| super::error_response(409, "INVALID_STATE_TRANSITION"))?;
@@ -228,6 +268,89 @@ fn greeting_response(
     result
 }
 
+/// Replay a completed canonical reply using the original session generation.
+/// Provider work runs outside the short replay cache lock so owner revoke never
+/// waits for slow TTS/Echo. The same cache lock serializes final consumption.
+fn resume_answer(request: &mut Request, state: &AppState) -> Result<HttpResponse, HttpResponse> {
+    parse_json::<ResumeAnswerBody>(request).and_then(|body| {
+        reject_if_session_ending(state)?;
+        if state
+            .voice_busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+        }
+        let _busy = super::http_evidence::VoiceBusyGuard::new(
+            &state.voice_busy,
+            &state.voice_cancel_requested,
+        );
+        reject_if_session_ending(state)?;
+        // Pin the original session across provider I/O. A new session
+        // can reuse the request sequence after the previous one closes.
+        let session_sequence = body.expected_session_sequence;
+        if session_sequence == 0
+            || state.active_session_sequence.load(Ordering::Acquire) != session_sequence
+        {
+            return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+        }
+        // Read the previously authorized suffix under the short replay lock.
+        // Never hold this lock across TTS or provider I/O: owner revoke
+        // needs the same lock to set the termination intent and fence
+        // the shared runtime authority immediately.
+        let suffix = {
+            let source = state.replay_source.lock();
+            if state.active_session_sequence.load(Ordering::Acquire) != session_sequence {
+                return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+            }
+            reject_if_session_ending(state)?;
+            let reply = source
+                .as_ref()
+                .ok_or_else(|| super::error_response(409, "INVALID_STATE_TRANSITION"))?;
+            if reply.request_sequence != body.request_sequence
+                || !reply.interrupted
+                || reply.resume_count >= MAX_RESUMES_PER_REPLY
+            {
+                return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+            }
+            match body.character_offset {
+                Some(offset) => authorized_character_suffix(&reply.reply, offset),
+                None => authorized_sentence_suffix(&reply.reply, body.sentence_index),
+            }
+            .ok_or_else(|| super::error_response(400, "INVALID_INPUT"))?
+        };
+        let result = with_engine_result(state, |engine| {
+            if engine.status().session_state != "active" {
+                return Err(vpr_owner_lab::LabError::InvalidState);
+            }
+            engine
+                .prepare_resumed_speech(&suffix)
+                .map(|response| super::json_response(200, &response))
+        })?;
+        // Reacquire the replay lock and validate the same generation
+        // before committing consumption. A concurrent owner revoke
+        // clears the source while holding this lock. It may also have
+        // revoked authority during the slow provider operation.
+        let mut source = state.replay_source.lock();
+        reject_if_session_ending(state)?;
+        if state.active_session_sequence.load(Ordering::Acquire) != session_sequence {
+            return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+        }
+        let reply = source
+            .as_mut()
+            .ok_or_else(|| super::error_response(409, "INVALID_STATE_TRANSITION"))?;
+        if reply.request_sequence != body.request_sequence
+            || !reply.interrupted
+            || reply.resume_count >= MAX_RESUMES_PER_REPLY
+        {
+            return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+        }
+        reply.resume_count += 1;
+        reply.interrupted = false;
+        Ok(result)
+    })
+}
+
 pub(super) fn route_post(
     path: &str,
     request: &mut Request,
@@ -236,53 +359,7 @@ pub(super) fn route_post(
     match path {
         "/api/avatar/greeting" => Some(greeting_response(request, state)),
         "/api/avatar/confirm-interruption" => Some(confirm_interruption(request, state)),
-        "/api/avatar/resume-answer" => {
-            Some(parse_json::<ResumeAnswerBody>(request).and_then(|body| {
-                reject_if_session_ending(state)?;
-                if state
-                    .voice_busy
-                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                    .is_err()
-                {
-                    return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
-                }
-                let _busy = super::http_evidence::VoiceBusyGuard::new(
-                    &state.voice_busy,
-                    &state.voice_cancel_requested,
-                );
-                reject_if_session_ending(state)?;
-                let mut source = state.replay_source.lock();
-                let reply = source
-                    .as_mut()
-                    .ok_or_else(|| super::error_response(409, "INVALID_STATE_TRANSITION"))?;
-                if reply.request_sequence != body.request_sequence
-                    || !reply.interrupted
-                    || reply.resume_count >= MAX_RESUMES_PER_REPLY
-                {
-                    return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
-                }
-                let suffix = match body.character_offset {
-                    Some(offset) => authorized_character_suffix(&reply.reply, offset),
-                    None => authorized_sentence_suffix(&reply.reply, body.sentence_index),
-                }
-                .ok_or_else(|| super::error_response(400, "INVALID_INPUT"))?;
-                let result = with_engine_result(state, |engine| {
-                    if engine.status().session_state != "active" {
-                        return Err(vpr_owner_lab::LabError::InvalidState);
-                    }
-                    engine
-                        .prepare_resumed_speech(&suffix)
-                        .map(|response| super::json_response(200, &response))
-                })?;
-                // End-session writes the atomic intent BEFORE acquiring replay_source.
-                // Reject a revoke that began during the potentially slow provider
-                // preparation, rather than handing its command to the browser.
-                reject_if_session_ending(state)?;
-                reply.resume_count += 1;
-                reply.interrupted = false;
-                Ok(result)
-            }))
-        }
+        "/api/avatar/resume-answer" => Some(resume_answer(request, state)),
         "/api/avatar/client-event" => {
             Some(parse_json::<ClientEventBody>(request).and_then(|body| {
                 reject_if_session_ending(state)?;
@@ -376,6 +453,36 @@ mod resume_tests {
             source.lock().is_none(),
             "late completion must not revive revoked replay"
         );
+    }
+
+    #[test]
+    fn late_previous_session_terminal_cannot_clear_or_reauthorize_new_reply() {
+        use parking_lot::Mutex;
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+        let source = Mutex::new(None);
+        let active = AtomicU64::new(1);
+        let ending = AtomicBool::new(false);
+
+        {
+            let mut replay =
+                super::begin_voice_terminal_replay(&source, &active, &ending, 1).unwrap();
+            super::retain_completed_reply_locked(&mut replay, &ending, 7, "Старый ответ.");
+        }
+        // A new session replaced the cached answer under the same canonical
+        // mutex. The old worker's completion is not allowed to clear it.
+        {
+            let mut replay = source.lock();
+            active.store(2, Ordering::Release);
+            super::retain_completed_reply_locked(&mut replay, &ending, 8, "Ответ новой сессии.");
+        }
+        assert!(super::begin_voice_terminal_replay(&source, &active, &ending, 1).is_none());
+        assert_eq!(source.lock().as_ref().unwrap().request_sequence, 8);
+        assert_eq!(source.lock().as_ref().unwrap().reply, "Ответ новой сессии.");
+
+        ending.store(true, Ordering::Release);
+        assert!(super::begin_voice_terminal_replay(&source, &active, &ending, 2).is_none());
+        assert!(super::begin_voice_terminal_replay(&source, &active, &ending, 0).is_none());
     }
 
     #[test]

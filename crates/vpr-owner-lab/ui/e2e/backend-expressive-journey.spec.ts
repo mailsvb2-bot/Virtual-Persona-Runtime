@@ -393,7 +393,7 @@ test("Expressive server STOP is sent from backend and prevents stale replay", as
   await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 15000 })
     .toEqual(expect.arrayContaining(["provider_stop_sent"]));
   await expectUnconfirmedDidStop(request, csrf);
-  const replay = await postJson(request, csrf, "/api/avatar/resume-answer", { request_sequence: 1, sentence_index: 0 });
+  const replay = await postJson(request, csrf, "/api/avatar/resume-answer", { expected_session_sequence: sequence, request_sequence: 1, sentence_index: 0 });
   expect(replay.status()).toBe(409);
 });
 
@@ -419,7 +419,7 @@ test("second caller cannot restart speech after canonical revoke", async ({ requ
   const { csrf, sequence } = await startEcho(request);
   await expectUnconfirmedDidStop(request, csrf);
   const before = await echoEvents(request);
-  const rejected = await postJson(request, csrf, "/api/avatar/resume-answer", { request_sequence: 1, sentence_index: 0 });
+  const rejected = await postJson(request, csrf, "/api/avatar/resume-answer", { expected_session_sequence: sequence, request_sequence: 1, sentence_index: 0 });
   expect(rejected.status()).toBe(409);
   const rejectedTurn = await submitOwnerTurn(request, csrf, 1, sequence, "Несанкционированный ответ");
   expect(rejectedTurn.ok()).toBeFalsy();
@@ -470,10 +470,12 @@ test("Expressive server STOP cancels in-flight TTS and quarantines unconfirmed p
   // An incomplete/cancelled response is not replay authority and must not be
   // regenerated as if it were the owner's completed answer.
   const confirmed = await postJson(request, csrf, "/api/avatar/confirm-interruption", {
+    expected_session_sequence: sequence,
     request_sequence: 1,
   });
   expect(confirmed.status()).toBe(409);
   const resumed = await postJson(request, csrf, "/api/avatar/resume-answer", {
+    expected_session_sequence: sequence,
     request_sequence: 1,
     sentence_index: 0,
   });
@@ -523,13 +525,26 @@ test("Expressive server resume is reauthorized and delivered through canonical E
     .toEqual(expect.arrayContaining(["provider_stop_sent"]));
 
   const confirmed = await postJson(request, csrf, "/api/avatar/confirm-interruption", {
+    expected_session_sequence: sequence,
     request_sequence: 1,
   });
   expect(confirmed.ok()).toBeTruthy();
 
+  // An old tab must not spend a matching request number against another
+  // owner session. Deny BEFORE TTS/Echo egress; not merely after returning.
+  const beforeStale = await echoEvents(request);
+  const stale = await postJson(request, csrf, "/api/avatar/resume-answer", {
+    expected_session_sequence: sequence + 1,
+    request_sequence: 1,
+    sentence_index: 0,
+  });
+  expect(stale.status()).toBe(409);
+  expect(await echoEvents(request)).toEqual(beforeStale);
+
   // The browser supplies only a cursor. The server resolves the suffix from
   // its retained authorized reply and prepares a fresh canonical output.
   const resumed = await postJson(request, csrf, "/api/avatar/resume-answer", {
+    expected_session_sequence: sequence,
     request_sequence: 1,
     sentence_index: 0,
   });
@@ -559,6 +574,61 @@ test("Expressive server resume is reauthorized and delivered through canonical E
   // This hermetic backend fixture proves authorized server delivery, not
   // audible browser playout or provider-confirmed playback.
   expect(await evidence.json()).toMatchObject({ canonical_playback_proven: false });
+});
+
+test("Owner revoke is not blocked behind a stalled authorized resume TTS", async ({ request }) => {
+  test.setTimeout(90000);
+  const { csrf, sequence } = await startEcho(request);
+  await submitVoiceTurn(request, csrf, 1, sequence);
+  const interrupted = await postJson(request, csrf, "/api/avatar/interrupt", {
+    expected_session_sequence: sequence,
+  });
+  expect(interrupted.ok()).toBeTruthy();
+  const confirmed = await postJson(request, csrf, "/api/avatar/confirm-interruption", {
+    expected_session_sequence: sequence,
+    request_sequence: 1,
+  });
+  expect(confirmed.ok()).toBeTruthy();
+
+  const previous = await request.get(`${providerUrl}/__state`);
+  expect(previous.ok()).toBeTruthy();
+  const previousCount = ((await previous.json() as { requests: Array<{ kind: string }> }).requests)
+    .filter((entry) => entry.kind === "tts").length;
+
+  const held = await request.post(`${providerUrl}/__hold-next-tts`);
+  expect(held.ok()).toBeTruthy();
+  // Start an authorized replay without awaiting its blocked provider response.
+  const resume = postJson(request, csrf, "/api/avatar/resume-answer", {
+    expected_session_sequence: sequence,
+    request_sequence: 1,
+    sentence_index: 0,
+  });
+  try {
+    await expect.poll(async () => {
+      const state = await request.get(`${providerUrl}/__state`);
+      const snapshot = await state.json() as { requests: Array<{ kind: string }> };
+      return snapshot.requests.filter((entry) => entry.kind === "tts").length;
+    }, { timeout: 15000 }).toBe(previousCount + 1);
+
+    // The original code held replay_source across the entire provider call.
+    // Since revoke must acquire that mutex BEFORE fencing authority, revoke
+    // could not finish while the fixture kept TTS's body open. This request
+    // must settle independently, with no fake successful remote STOP claim.
+    const revoke = postJson(request, csrf, "/api/session/revoke", {});
+    const revokeResult = await Promise.race([
+      revoke.then((response) => response.status()),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 9000)),
+    ]);
+    expect(revokeResult, "owner revoke waited for the blocked replay TTS").not.toBeNull();
+    expect([200, 502]).toContain(revokeResult);
+  } finally {
+    // Always release the hermetic provider even if the assertion failed.
+    await request.post(`${providerUrl}/__release-held-tts`);
+  }
+  const replay = await resume;
+  expect(replay.status(), "revoked replay must never return a usable command").not.toBe(200);
+  const status = await request.get(`${ownerLabUrl}/api/status`);
+  expect((await status.json() as { session_state: string }).session_state).toBe("revoked");
 });
 
 test("Expressive browser STOP failure revokes provider authority and closes viewer", async ({ page, request }) => {
