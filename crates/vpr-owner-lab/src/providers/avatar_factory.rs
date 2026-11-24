@@ -76,8 +76,13 @@ fn build_did_avatar(
         profile.map(|profile| profile.did_fluent),
         false,
     )?;
+    // Destructive D-ID DELETE also erases transcripts, insights and recordings.
+    // Explicit operator opt-in only; remote dual-track STOP remains unproven.
+    let delete_v2 = resolved_bool("VPR_DID_V2_SESSION_DELETE_PERMANENTLY", None, false)?;
     let provider = DidAgentStreamsAvatar::new(
-        DidAgentStreamsConfig::new(endpoint.clone(), api_key, agent_id.clone()).with_fluent(fluent),
+        DidAgentStreamsConfig::new(endpoint.clone(), api_key, agent_id.clone())
+            .with_fluent(fluent)
+            .with_v2_delete_on_close(delete_v2),
     )
     .map_err(|_| "D-ID provider configuration rejected".to_string())?;
     // The canonical TTS route may be configured through the secure Windows
