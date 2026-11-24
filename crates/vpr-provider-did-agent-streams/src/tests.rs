@@ -531,6 +531,43 @@ fn did_v2_livekit_close_without_echo_never_claims_remote_stop() {
 }
 
 #[test]
+fn did_v2_exact_session_delete_requires_explicit_opt_in_and_never_proves_rtp_stop() {
+    // DELETE permanently removes vendor-side session transcript/recording.
+    // It must not be sent in the default provider configuration.
+    let opaque_id = "sess/one?visitor=2";
+    for status in ["204 No Content", "404 Not Found", "200 OK"] {
+        let (endpoint, captured) = serve(vec![(status, String::new())]);
+        let provider = DidAgentStreamsAvatar::new(
+            DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7")
+                .with_v2_delete_on_close(true),
+        )
+        .unwrap();
+        let session = RealtimeAvatarSession {
+            provider_resource_id: opaque_id.to_owned(),
+            provider_session_id: opaque_id.to_owned(),
+            transport: RealtimeAvatarTransport::LiveKit {
+                server_url: "wss://livekit.example.test".to_owned(),
+                token: "viewer-token".to_owned(),
+            },
+        };
+        let error = provider.close_session(&session).unwrap_err();
+        // Even a documented 204 receipt does not attest cessation of
+        // both remote RTP publishers or grant RT1 release permission.
+        assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+        assert!(!error.retryable);
+        let request = captured.recv().unwrap();
+        assert!(
+            request.starts_with(
+                "DELETE /v2/agents/sessions/sess%2Fone%3Fvisitor=2 HTTP/1.1"
+            ),
+            "only the exact opaque session may be deleted"
+        );
+        assert!(request.to_ascii_lowercase().contains("authorization: basic secret-key"));
+        assert!(!request.starts_with("DELETE /agents/"));
+    }
+}
+
+#[test]
 fn stale_expressive_session_rejects_speech_without_reopening_legacy_transport() {
     let provider = adapter("http://127.0.0.1:1".to_owned());
     let stale = RealtimeAvatarSession {
