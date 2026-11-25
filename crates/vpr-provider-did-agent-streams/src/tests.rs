@@ -2416,3 +2416,55 @@ fn echo_pcm_stream_rechecks_stop_and_cancel_after_backend_write() {
     assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
     assert_eq!(aborts.load(Ordering::SeqCst), 1);
 }
+
+
+#[test]
+fn echo_pcm_backend_failure_fences_the_same_utterance() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+
+    struct Active;
+    impl CancellationProbe for Active {
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+    }
+
+    struct FailingStream(Arc<AtomicUsize>);
+    impl RealtimeAvatarPcmStream for FailingStream {
+        fn push_pcm(&mut self, _: &[u8], _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Err(super::unavailable())
+        }
+
+        fn finish(&mut self, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Err(super::unavailable())
+        }
+
+        fn abort(&mut self) -> Result<(), ProviderError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    for finish in [false, true] {
+        let registry = Arc::new(DidEchoRegistry::default());
+        registry.insert("pcm-failed").unwrap();
+        let aborts = Arc::new(AtomicUsize::new(0));
+        let mut stream = RevocableEchoPcmStream {
+            inner: Box::new(FailingStream(Arc::clone(&aborts))),
+            sessions: registry,
+            session_id: "pcm-failed".to_owned(),
+            terminated: false,
+        };
+        let result = if finish {
+            stream.finish(&Active)
+        } else {
+            stream.push_pcm(&[0, 0], &Active)
+        };
+        assert!(result.is_err());
+        assert_eq!(aborts.load(Ordering::SeqCst), 1);
+        assert!(stream.push_pcm(&[0, 0], &Active).is_err());
+        assert!(stream.finish(&Active).is_err());
+        assert_eq!(aborts.load(Ordering::SeqCst), 1);
+    }
+}
