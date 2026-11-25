@@ -2417,7 +2417,6 @@ fn echo_pcm_stream_rechecks_stop_and_cancel_after_backend_write() {
     assert_eq!(aborts.load(Ordering::SeqCst), 1);
 }
 
-
 #[test]
 fn echo_pcm_backend_failure_fences_the_same_utterance() {
     use std::sync::Arc;
