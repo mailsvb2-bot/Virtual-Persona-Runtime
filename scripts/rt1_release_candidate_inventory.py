@@ -44,8 +44,18 @@ def inventory() -> dict:
         {
             "id": "P0_MULTI_OWNER_ACCOUNTS",
             "status": "UNVERIFIED",
-            "reason": "Canonical durable owner workspace currently supports one reviewed Persona; tenant isolation is not accepted",
+            "reason": "Canonical multi-owner persistence, reviewed enrollment and owner-scoped provider profiles exist; independent deployed tenant isolation and operator-provisioned provider readiness remain unverified",
             "source": "crates/vpr-owner-lab/src/rt1_workspace_service.rs",
+            "source_inventory": {
+                name: {"path": path, "sha256": digest(ROOT / path) if (ROOT / path).is_file() else None}
+                for name, path in {
+                    "canonical_accounts": "crates/vpr-owner-lab/src/rt1_workspace_accounts.rs",
+                    "reviewed_enrollment": "crates/vpr-owner-lab/src/rt1_owner_enrollment.rs",
+                    "enrollment_http": "crates/vpr-owner-lab/src/http_rt1_enrollment.rs",
+                    "owner_provider_profiles": "crates/vpr-owner-lab/src/rt1_owner_provider_profile.rs",
+                    "account_isolation_tests": "crates/vpr-owner-lab/src/rt1_workspace_accounts_tests.rs",
+                }.items()
+            },
         },
         {
             "id": "P0_PUBLIC_HTTPS_DEPLOYMENT",
