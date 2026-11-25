@@ -14,6 +14,6 @@
   "dependency_review": {
     "minimum_denied_severity": "high",
     "action": "actions/dependency-review-action",
-    "commit": "a1d282b36b6f3519aa1f3fc636f609c47dddb294"
+    "commit": "bbc44d14a204704ccc493733616cd1e93a0321ec"
   }
 }

@@ -24,7 +24,7 @@ required = (
     'grep -q "RUSTSEC-2023-0071"',
     "npm audit --package-lock-only --ignore-scripts --json",
     "python3 scripts/dependency_audit_gate.py --npm-json /tmp/npm-audit.json",
-    "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294",
+    "actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec",
     "fail-on-severity: high",
     "Review dependency changes (fail closed if unavailable)",
 )
@@ -68,7 +68,7 @@ if npm.get("exceptions") != [] or npm.get("exception_budget") != 0:
 
 if review.get("minimum_denied_severity") != "high":
     raise SystemExit("dependency-review policy must deny high/critical vulnerabilities")
-if review.get("commit") != "a1d282b36b6f3519aa1f3fc636f609c47dddb294":
+if review.get("commit") != "bbc44d14a204704ccc493733616cd1e93a0321ec":
     raise SystemExit("dependency-review action pin drifted")
 
 if 'name = "rsa"' not in fixture or 'version = "0.9.10"' not in fixture:
