@@ -25,6 +25,14 @@ server {
     # session checks remain authoritative. Never trust a client-supplied
     # forwarding header or expose an owner API through this edge.
     proxy_http_version 1.1;
+    # Do not let the edge retain a complete visitor response after the
+    # canonical cancellable upstream writer has been revoked. Bytes already
+    # delivered to the client cannot be recalled; STOP still needs RTP proof.
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_ignore_client_abort off;
+    proxy_next_upstream off;
+    proxy_ignore_headers X-Accel-Buffering;
     proxy_set_header Host "127.0.0.1:8787";
     proxy_set_header Origin "http://127.0.0.1:8787";
     proxy_set_header Connection "close";
@@ -70,7 +78,9 @@ server {
     # Only the canonical authenticated visitor handlers can create or
     # continue a session; every POST checks the externally observed Origin
     # before it is normalized for the private loopback upstream.
-    location ~ ^/api/rt1/visitor/(start|answer|ice|text|voice|interrupt|status|close)$ {
+    # Privacy controls must remain reachable even when publication is denied.
+    # Other optional memory APIs remain private until explicitly qualified.
+    location ~ ^/api/rt1/visitor/(start|answer|ice|text|voice|interrupt|status|close|memory/(consent|erase|revoke|rotate))$ {
         limit_except POST { deny all; }
         if ($http_origin != "https://__RT1_VISITOR_FQDN__") { return 403; }
         proxy_pass http://127.0.0.1:8787;

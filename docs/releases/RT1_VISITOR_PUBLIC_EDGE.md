@@ -20,8 +20,9 @@ any backend API is called, and is never part of the GET URL or Nginx log path.
   visitor (no Owner Lab voice profile, evidence mode or other bootstrap state).
 - The Nginx example `deploy/rt1-public-visitor.nginx.conf.template` is an
   **explicit allowlist**. Only visitor HTML, RT1 JS/CSS, the existing microphone
-  AudioWorklet, the pinned LiveKit client, minimal bootstrap GET and eight
-  canonical visitor POST routes are forwarded. Owner Lab UI `/`, `/rt1`, capture, owner APIs, evidence, admin,
+  AudioWorklet, the pinned LiveKit client, minimal bootstrap GET, eight
+  canonical visitor POST routes, and the four existing memory privacy controls
+  (consent, erase, revoke, rotate) are forwarded. Owner Lab UI `/`, `/rt1`, capture, owner APIs, evidence, admin,
   raw bootstrap and all unknown routes are not forwarded.
 - Incoming public POSTs require the exact external HTTPS `Origin`; the edge
   then rewrites Host/Origin for the **existing loopback-only** CSRF parser.
@@ -61,11 +62,35 @@ any backend API is called, and is never part of the GET URL or Nginx log path.
    the exact deployment. Remote dual-track STOP must be observed rather than
    inferred from a local media-element close.
 
+## Unified staging preflight
+
+Use the existing offline clean installer in the MuseTalk renderer guide, with
+independently approved wheel and environment hashes. Start the canonical
+worker and private Owner Lab using the same worker endpoint/token and approved
+Persona assets. Install the exact visitor-only Nginx template and validate TLS
+with `nginx -t`. Never expose the worker or owner listener.
+
+From the approved worker Python environment with both services running and
+no active visitor sessions, run:
+
+```bash
+python scripts/rt1_staging_preflight.py \\
+  --candidate-sha "$(git rev-parse HEAD)" \\
+  --gpu-evidence /private/evidence/new-gpu-compute.json
+```
+
+This invokes the existing approved wheelhouse validation and real GPU
+acceptance, probes the authenticated existing worker operation ledger without
+CREATE, and calls the existing public HTTPS probe. A pass does not authorize
+publication. The current public release gate still denies new public
+sessions until rights, budgets and real evidence are qualified. The independent
+browser journey and measured dual-track STOP remain mandatory.
+
 ## Explicit non-claims
 
 This is a **deployment boundary and working cross-origin link generator**,
 not an activated public hostname or independent multi-tenant owner service.
-The canonical Owner Lab still contains one reviewed Persona workspace.
+Canonical multi-owner storage and local enrollment now exist; public account enrollment and independently verified deployed tenant isolation remain separate requirements.
 Actual live Internet end-to-end acceptance requires authorized DNS/TLS,
 non-synthetic GPU inference, external provider credentials and independently
 reviewed owner/visitor release evidence. **No runtime release gate was
