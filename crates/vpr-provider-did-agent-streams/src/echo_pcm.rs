@@ -106,11 +106,15 @@ impl RevocableEchoPcmStream {
             let _ = self.abort();
             return Err(cancelled());
         }
-        if !self.sessions.contains(&self.session_id)? {
-            let _ = self.abort();
-            return Err(policy_denied());
+        match self.sessions.contains(&self.session_id) {
+            Ok(true) => Ok(()),
+            result => {
+                // Loss of registry authority is itself a reason to fence the
+                // private utterance, including a poisoned registry.
+                let _ = self.abort();
+                Err(result.err().unwrap_or_else(policy_denied))
+            }
         }
-        Ok(())
     }
 }
 
@@ -123,6 +127,11 @@ impl RealtimeAvatarPcmStream for RevocableEchoPcmStream {
         self.check(cancellation)?;
         let result = self.inner.push_pcm(pcm, cancellation);
         self.check(cancellation)?;
+        if result.is_err() {
+            // A partial write can already have queued speech. Do not allow
+            // a retry on the same utterance after ambiguous delivery.
+            let _ = self.abort();
+        }
         result
     }
 
@@ -130,7 +139,11 @@ impl RealtimeAvatarPcmStream for RevocableEchoPcmStream {
         self.check(cancellation)?;
         let result = self.inner.finish(cancellation);
         self.check(cancellation)?;
-        self.terminated = true;
+        if result.is_err() {
+            let _ = self.abort();
+        } else {
+            self.terminated = true;
+        }
         result
     }
 
