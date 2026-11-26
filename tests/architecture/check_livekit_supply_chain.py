@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import hashlib
 
 ROOT = Path(__file__).resolve().parents[2]
 UI = ROOT / "crates" / "vpr-owner-lab" / "ui"
@@ -11,7 +12,7 @@ VENDOR_SCRIPT = (UI / "scripts" / "vendor-livekit.mjs").read_text(encoding="utf-
 PACKAGE = json.loads((UI / "package.json").read_text(encoding="utf-8"))
 LOCK = json.loads((UI / "package-lock.json").read_text(encoding="utf-8"))
 
-VERSION = "2.23.0"
+VERSION = "2.25.0"
 ASSET = UI / "dist" / "vendor" / "livekit-client.umd.js"
 DIGEST = UI / "dist" / "vendor" / "livekit-client.umd.js.sha256"
 LICENSE = UI / "vendor" / "livekit-client.LICENSE"
@@ -45,7 +46,7 @@ if not str(locked.get("integrity", "")).startswith("sha512-"):
     raise SystemExit("package-lock LiveKit entry must retain npm integrity evidence")
 
 for required in (
-    'const EXPECTED_VERSION = "2.23.0";',
+    'const EXPECTED_VERSION = "2.25.0";',
     "node_modules/livekit-client/dist/livekit-client.umd.js",
     "createHash",
     "sha256",
@@ -74,6 +75,8 @@ if not ASSET.is_file() or ASSET.stat().st_size == 0:
     raise SystemExit("committed self-hosted LiveKit artifact is missing")
 if not DIGEST.is_file():
     raise SystemExit("committed self-hosted LiveKit digest is missing")
+if DIGEST.read_text(encoding="utf-8").strip() != hashlib.sha256(ASSET.read_bytes()).hexdigest() + "  livekit-client.umd.js":
+    raise SystemExit("committed self-hosted LiveKit asset digest mismatch")
 if not LICENSE.is_file() or not NOTICE.is_file():
     raise SystemExit("LiveKit license/notice provenance is missing")
 
