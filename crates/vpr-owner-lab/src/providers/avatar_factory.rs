@@ -76,8 +76,13 @@ fn build_did_avatar(
         profile.map(|profile| profile.did_fluent),
         false,
     )?;
+    // Destructive D-ID DELETE also erases transcripts, insights and recordings.
+    // Explicit operator opt-in only; remote dual-track STOP remains unproven.
+    let delete_v2 = resolved_bool("VPR_DID_V2_SESSION_DELETE_PERMANENTLY", None, false)?;
     let provider = DidAgentStreamsAvatar::new(
-        DidAgentStreamsConfig::new(endpoint.clone(), api_key, agent_id.clone()).with_fluent(fluent),
+        DidAgentStreamsConfig::new(endpoint.clone(), api_key, agent_id.clone())
+            .with_fluent(fluent)
+            .with_v2_delete_on_close(delete_v2),
     )
     .map_err(|_| "D-ID provider configuration rejected".to_string())?;
     // The canonical TTS route may be configured through the secure Windows
@@ -91,7 +96,17 @@ fn build_did_avatar(
     if pcm_tts_enabled && !echo_enabled {
         return Err("canonical TTS requires server-owned D-ID Echo; do not disable Echo".into());
     }
-    let mut backend_fingerprint = vec![endpoint.clone(), agent_id.clone()];
+    // Operational status must reveal when destructive provider-session
+    // deletion is explicitly enabled, without exposing provider secrets.
+    let mut backend_fingerprint = vec![
+        endpoint.clone(),
+        agent_id.clone(),
+        if delete_v2 {
+            "did-v2-session-delete-explicit-opt-in".to_owned()
+        } else {
+            "did-v2-session-delete-disabled".to_owned()
+        },
+    ];
     let provider = if echo_enabled && pcm_tts_enabled {
         let python =
             resolved_value("VPR_DID_ECHO_PYTHON", None).unwrap_or_else(|| "python".to_owned());

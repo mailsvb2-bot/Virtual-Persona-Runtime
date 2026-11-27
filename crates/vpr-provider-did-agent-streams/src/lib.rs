@@ -23,6 +23,7 @@ mod protocol;
 mod provider_error;
 mod response_json;
 mod session_creation;
+mod session_termination;
 mod webrtc_creation;
 
 use client_control::DidClientControlRegistry;
@@ -46,6 +47,8 @@ pub struct DidAgentStreamsConfig {
     agent_id: String,
     fluent: bool,
     timeout: Duration,
+    /// Opt-in destructive deletion of V2 session data; 204 is NOT RTP STOP proof.
+    v2_delete_on_close: bool,
 }
 
 impl DidAgentStreamsConfig {
@@ -61,6 +64,7 @@ impl DidAgentStreamsConfig {
             agent_id: agent_id.into(),
             fluent: false,
             timeout: DEFAULT_TIMEOUT,
+            v2_delete_on_close: false,
         }
     }
 
@@ -73,6 +77,15 @@ impl DidAgentStreamsConfig {
     #[must_use]
     pub const fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Opt into D-ID's destructive V2 exact-session DELETE on canonical close.
+    /// This removes provider-side transcript/insights/recording. No DELETE by default.
+    /// Neither HTTP 204 nor 404 proves termination of both RTP publishers.
+    #[must_use]
+    pub const fn with_v2_delete_on_close(mut self, enabled: bool) -> Self {
+        self.v2_delete_on_close = enabled;
         self
     }
 
@@ -546,23 +559,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
     fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
         Self::validate_session(session)?;
         match session.transport {
-            RealtimeAvatarTransport::LiveKit { .. } => {
-                // V2 session conversion binds both identifiers to the same
-                // provider-issued session id. Refuse mismatched identities.
-                if session.provider_resource_id != session.provider_session_id {
-                    return Err(policy_denied());
-                }
-
-                // Stop the private Echo audio sender when present, but never
-                // equate local Echo closure with D-ID's remote A/V termination.
-                if let Some(backend) = &self.echo_backend {
-                    self.echo_sessions
-                        .close_session(backend.as_ref(), &session.provider_session_id)?;
-                }
-                // The repository's release contract has no verified D-ID V2
-                // remote termination operation. Preserve an unconfirmed STOP.
-                Err(unavailable())
-            }
+            RealtimeAvatarTransport::LiveKit { .. } => session_termination::close_v2(self, session),
             RealtimeAvatarTransport::WebRtc { .. } => {
                 let response = self
                     .authorized(

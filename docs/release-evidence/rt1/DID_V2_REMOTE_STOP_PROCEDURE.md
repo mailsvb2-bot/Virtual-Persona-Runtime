@@ -29,7 +29,19 @@ The observer calls **GET /v2/agents/sessions/{sessionId}**. Its HTTP transport *
 response bodies except a small status allowlist; it exits with code 3
 (`REMOTE_VIDEO_STOP_UNCONFIRMED`) even when the provider reports `closed`.
 A GET response alone is **not** a verified, causally linked termination receipt.
-No DELETE for V2 is assumed, invented, or attempted.
+D-ID now documents an exact-session `DELETE /v2/agents/sessions/{sessionId}`
+with HTTP `204 Deleted` (<https://docs.d-id.com/reference/deletesession>).
+This **permanently deletes** provider-side session data including transcript,
+insights and recording; it does not document a bounded time for terminating
+both remote media publishers, repeated DELETE after a lost 204, or whether
+HTTP 404 means a prior STOP succeeded. Accordingly the canonical D-ID adapter
+may issue it only with the explicit operator setting
+`VPR_DID_V2_SESSION_DELETE_PERMANENTLY=true` (default false).
+This setting changes the existing `close_session` path, not a second STOP
+executor. Even a received 204 still returns unconfirmed from the adapter,
+and does not open the RT1 release gate. **Never enable on a production account
+without approved data deletion/retention policy and an independent receiver
+capturing real RTP activity.** A read-only GET remains observation only.
 
 ## Release decision
 - **Pass local/media access revoke** only with measured independent receiver RTP
@@ -40,7 +52,7 @@ No DELETE for V2 is assumed, invented, or attempted.
   immediate STOP acknowledgement.
 - **Pass RT0 exit** only after canonical exact-candidate evidence evaluator and
   real owner/non-owner, playback, A/V, billing, rights, voice and human gates.
-- Otherwise leave #324 Draft. The observer cannot alter this decision.
+- Otherwise keep RT1 publication blocked and #475 Draft. The observer cannot alter this decision.
 
 Run `python3 -m unittest tests/e2e/test_rt1_did_v2_remote_stop_observe.py`
 to check redaction and no-credentials fail-closed behavior.

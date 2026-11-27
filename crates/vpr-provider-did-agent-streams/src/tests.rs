@@ -531,6 +531,45 @@ fn did_v2_livekit_close_without_echo_never_claims_remote_stop() {
 }
 
 #[test]
+fn did_v2_exact_session_delete_requires_explicit_opt_in_and_never_proves_rtp_stop() {
+    // DELETE permanently removes vendor-side session transcript/recording.
+    // It must not be sent in the default provider configuration.
+    let opaque_id = "sess/one?visitor=2";
+    for status in ["204 No Content", "404 Not Found", "200 OK"] {
+        let (endpoint, captured) = serve(vec![(status, String::new())]);
+        let provider = DidAgentStreamsAvatar::new(
+            DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7")
+                .with_v2_delete_on_close(true),
+        )
+        .unwrap();
+        let session = RealtimeAvatarSession {
+            provider_resource_id: opaque_id.to_owned(),
+            provider_session_id: opaque_id.to_owned(),
+            transport: RealtimeAvatarTransport::LiveKit {
+                server_url: "wss://livekit.example.test".to_owned(),
+                token: "viewer-token".to_owned(),
+            },
+        };
+        let error = provider.close_session(&session).unwrap_err();
+        // Even a documented 204 receipt does not attest cessation of
+        // both remote RTP publishers or grant RT1 release permission.
+        assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+        assert!(!error.retryable);
+        let request = captured.recv().unwrap();
+        assert!(
+            request.starts_with("DELETE /v2/agents/sessions/sess%2Fone%3Fvisitor=2 HTTP/1.1"),
+            "only the exact opaque session may be deleted"
+        );
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: basic secret-key")
+        );
+        assert!(!request.starts_with("DELETE /agents/"));
+    }
+}
+
+#[test]
 fn stale_expressive_session_rejects_speech_without_reopening_legacy_transport() {
     let provider = adapter("http://127.0.0.1:1".to_owned());
     let stale = RealtimeAvatarSession {
@@ -1296,6 +1335,69 @@ fn echo_speech_revoked_inside_backend_never_reports_success() {
 }
 
 #[test]
+fn echo_one_shot_pcm_revoked_inside_backend_never_reports_success() {
+    use std::sync::Arc;
+
+    struct RevokingPcmBackend {
+        revoked: Arc<AtomicBool>,
+    }
+    impl DidEchoBackend for RevokingPcmBackend {
+        fn open(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn speak_pcm(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: u32,
+            _: u16,
+            _: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            self.revoked.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        fn stop(&self, _: &str) -> Result<(), ProviderError> {
+            Ok(())
+        }
+    }
+
+    struct SharedProbe(Arc<AtomicBool>);
+    impl CancellationProbe for SharedProbe {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+
+    let revoked = Arc::new(AtomicBool::new(false));
+    let provider =
+        adapter("http://127.0.0.1:1".to_owned()).with_echo_backend(Arc::new(RevokingPcmBackend {
+            revoked: Arc::clone(&revoked),
+        }));
+    provider.echo_sessions.insert("pcm-one-shot").unwrap();
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "pcm-one-shot".to_owned(),
+        provider_session_id: "pcm-one-shot".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+    let error = provider
+        .speak_pcm(&session, &[0, 0], 16_000, 1, &SharedProbe(revoked))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+}
+
+#[test]
 fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first() {
     use std::sync::Arc;
 
@@ -1709,6 +1811,85 @@ fn did_v2_echo_local_stop_does_not_claim_remote_session_stop() {
     );
     assert!(!provider.echo_sessions.contains("echo-session-1").unwrap());
     // Local Echo STOP must not be followed by an invented V2 DELETE request.
+    assert!(captured.try_recv().is_err());
+}
+
+#[test]
+fn did_v2_opt_in_exact_delete_204_does_not_prove_remote_rtp_stop() {
+    let (endpoint, captured) = serve(vec![("204 No Content", String::new())]);
+    let provider = DidAgentStreamsAvatar::new(
+        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7").with_v2_delete_on_close(true),
+    )
+    .unwrap();
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "session-delete-test".to_owned(),
+        provider_session_id: "session-delete-test".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+
+    // A DELETE receipt can acknowledge session data removal, but it is NOT
+    // independently measured cessation of both remote audio/video tracks.
+    let error = provider.close_session(&session).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
+    let request = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    assert!(request.starts_with("DELETE /v2/agents/sessions/session-delete-test HTTP/1.1"));
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("authorization: basic secret-key")
+    );
+    assert!(!request.contains("viewer-token"));
+}
+
+#[test]
+fn did_v2_opt_in_404_cannot_claim_idempotent_stop() {
+    let (endpoint, captured) = serve(vec![("404 Not Found", String::new())]);
+    let provider = DidAgentStreamsAvatar::new(
+        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7").with_v2_delete_on_close(true),
+    )
+    .unwrap();
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "session-unknown".to_owned(),
+        provider_session_id: "session-unknown".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+
+    // A 404 after a lost 204 reply may be ambiguous: no inferred success.
+    let error = provider.close_session(&session).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
+    let request = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    assert!(request.starts_with("DELETE /v2/agents/sessions/session-unknown HTTP/1.1"));
+}
+
+#[test]
+fn did_v2_opt_in_delete_refuses_mismatched_session_identity_without_network_io() {
+    let (endpoint, captured) = serve(vec![("204 No Content", String::new())]);
+    let provider = DidAgentStreamsAvatar::new(
+        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7").with_v2_delete_on_close(true),
+    )
+    .unwrap();
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "resource-other".to_owned(),
+        provider_session_id: "session-delete-test".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+    let error = provider.close_session(&session).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
     assert!(captured.try_recv().is_err());
 }
 
@@ -2145,69 +2326,6 @@ fn echo_pcm_open_revoked_by_backend_aborts_stream_and_denies_handoff() {
     };
     assert_eq!(error.kind, ProviderErrorKind::Cancelled);
     assert!(aborted.load(Ordering::SeqCst));
-}
-
-#[test]
-fn echo_one_shot_pcm_revoked_inside_backend_never_reports_success() {
-    use std::sync::Arc;
-
-    struct RevokingPcmBackend {
-        revoked: Arc<AtomicBool>,
-    }
-    impl DidEchoBackend for RevokingPcmBackend {
-        fn open(
-            &self,
-            _: &str,
-            _: &str,
-            _: &str,
-            _: &dyn CancellationProbe,
-        ) -> Result<(), ProviderError> {
-            Ok(())
-        }
-        fn speak(&self, _: &str, _: &str, _: &dyn CancellationProbe) -> Result<(), ProviderError> {
-            Ok(())
-        }
-        fn speak_pcm(
-            &self,
-            _: &str,
-            _: &[u8],
-            _: u32,
-            _: u16,
-            _: &dyn CancellationProbe,
-        ) -> Result<(), ProviderError> {
-            self.revoked.store(true, Ordering::SeqCst);
-            Ok(())
-        }
-        fn stop(&self, _: &str) -> Result<(), ProviderError> {
-            Ok(())
-        }
-    }
-
-    struct SharedProbe(Arc<AtomicBool>);
-    impl CancellationProbe for SharedProbe {
-        fn is_cancelled(&self) -> bool {
-            self.0.load(Ordering::SeqCst)
-        }
-    }
-
-    let revoked = Arc::new(AtomicBool::new(false));
-    let provider =
-        adapter("http://127.0.0.1:1".to_owned()).with_echo_backend(Arc::new(RevokingPcmBackend {
-            revoked: Arc::clone(&revoked),
-        }));
-    provider.echo_sessions.insert("pcm-one-shot").unwrap();
-    let session = RealtimeAvatarSession {
-        provider_resource_id: "pcm-one-shot".to_owned(),
-        provider_session_id: "pcm-one-shot".to_owned(),
-        transport: RealtimeAvatarTransport::LiveKit {
-            server_url: "wss://livekit.example.test".to_owned(),
-            token: "viewer-token".to_owned(),
-        },
-    };
-    let error = provider
-        .speak_pcm(&session, &[0, 0], 16_000, 1, &SharedProbe(revoked))
-        .unwrap_err();
-    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
 }
 
 #[test]
