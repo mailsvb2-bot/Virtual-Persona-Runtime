@@ -107,7 +107,7 @@ pub struct DidAgentStreamsAvatar {
     base_url: reqwest::Url,
     client_control: DidClientControlRegistry,
     echo_backend: Option<Arc<dyn DidEchoBackend>>,
-    echo_sessions: DidEchoRegistry,
+    echo_sessions: Arc<DidEchoRegistry>,
 }
 
 impl DidAgentStreamsAvatar {
@@ -128,7 +128,7 @@ impl DidAgentStreamsAvatar {
             base_url,
             client_control: DidClientControlRegistry::default(),
             echo_backend: None,
-            echo_sessions: DidEchoRegistry::default(),
+            echo_sessions: Arc::new(DidEchoRegistry::default()),
         })
     }
 
@@ -428,7 +428,12 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             let _ = stream.abort();
             return Err(policy_denied());
         }
-        Ok(stream)
+        Ok(Box::new(echo_pcm::RevocableEchoPcmStream {
+            inner: stream,
+            sessions: Arc::clone(&self.echo_sessions),
+            session_id: session.provider_session_id.clone(),
+            terminated: false,
+        }))
     }
 
     fn speak_audio_url(
