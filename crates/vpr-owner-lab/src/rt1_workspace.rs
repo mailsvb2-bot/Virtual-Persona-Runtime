@@ -17,6 +17,10 @@ pub(crate) struct OwnerWorkspaceRecord {
     owner_token_sha256: String,
     publication: Option<CanonicalPublicationSnapshot>,
     visitor_token_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) representation_rights: Vec<vpr_policy::representation_rights::RepresentationGrant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) session_budget: Option<vpr_policy::session_budget::SessionBudget>,
 }
 
 impl OwnerWorkspaceRecord {
@@ -31,6 +35,8 @@ impl OwnerWorkspaceRecord {
                 owner_token_sha256: hash_secret(&token),
                 publication: None,
                 visitor_token_sha256: None,
+                representation_rights: Vec::new(),
+                session_budget: None,
             },
             token,
         ))
@@ -178,6 +184,16 @@ impl OwnerWorkspaceRecord {
     pub fn validate(&self, persona_id: &str, persona_version: u64) -> Result<(), String> {
         if self.owner_id.len() != 32 || !valid_sha256(&self.owner_token_sha256) {
             return Err("invalid owner identity".into());
+        }
+        if self.representation_rights.iter().any(|grant| {
+            grant.owner_id != self.owner_id || grant.persona_id != persona_id
+        }) {
+            return Err("representation rights identity mismatch".into());
+        }
+        if let Some(budget) = &self.session_budget {
+            budget
+                .remaining()
+                .map_err(|_| "invalid canonical budget ledger")?;
         }
         if let Some(publication) = &self.publication {
             if publication.owner_id != self.owner_id
