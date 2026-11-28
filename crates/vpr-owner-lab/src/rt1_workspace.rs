@@ -185,9 +185,11 @@ impl OwnerWorkspaceRecord {
         if self.owner_id.len() != 32 || !valid_sha256(&self.owner_token_sha256) {
             return Err("invalid owner identity".into());
         }
-        if self.representation_rights.iter().any(|grant| {
-            grant.owner_id != self.owner_id || grant.persona_id != persona_id
-        }) {
+        if self
+            .representation_rights
+            .iter()
+            .any(|grant| grant.owner_id != self.owner_id || grant.persona_id != persona_id)
+        {
             return Err("representation rights identity mismatch".into());
         }
         if let Some(budget) = &self.session_budget {
