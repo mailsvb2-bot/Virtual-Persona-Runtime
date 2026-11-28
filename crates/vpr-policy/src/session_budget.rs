@@ -31,7 +31,10 @@ pub enum BudgetDenial {
 impl SessionBudget {
     #[must_use]
     pub fn new(limit: u64) -> Self {
-        Self { limit, operations: BTreeMap::new() }
+        Self {
+            limit,
+            operations: BTreeMap::new(),
+        }
     }
 
     /// Unknown provider outcomes remain reserved at their full upper bound.
@@ -64,7 +67,13 @@ impl SessionBudget {
         if maximum > self.remaining()? {
             return Err(BudgetDenial::Exhausted);
         }
-        self.operations.insert(operation.to_owned(), Reservation { maximum, confirmed: None });
+        self.operations.insert(
+            operation.to_owned(),
+            Reservation {
+                maximum,
+                confirmed: None,
+            },
+        );
         Ok(())
     }
 
@@ -74,9 +83,16 @@ impl SessionBudget {
     /// # Errors
     /// Denies missing reservations, conflicting or above-bound receipts.
     pub fn settle(&mut self, operation: &str, amount: u64) -> Result<(), BudgetDenial> {
-        let entry = self.operations.get_mut(operation).ok_or(BudgetDenial::UnknownReservation)?;
+        let entry = self
+            .operations
+            .get_mut(operation)
+            .ok_or(BudgetDenial::UnknownReservation)?;
         if let Some(previous) = entry.confirmed {
-            return if previous == amount { Ok(()) } else { Err(BudgetDenial::ConflictingReceipt) };
+            return if previous == amount {
+                Ok(())
+            } else {
+                Err(BudgetDenial::ConflictingReceipt)
+            };
         }
         if amount > entry.maximum {
             return Err(BudgetDenial::AboveReservation);
@@ -93,7 +109,10 @@ mod tests {
     fn unknown_outcomes_retain_funds_and_retries_never_dispatch_twice() {
         let mut budget = SessionBudget::new(100);
         assert_eq!(budget.reserve("a", 70), Ok(()));
-        assert_eq!(budget.reserve("a", 70), Err(BudgetDenial::DuplicateOperation));
+        assert_eq!(
+            budget.reserve("a", 70),
+            Err(BudgetDenial::DuplicateOperation)
+        );
         assert_eq!(budget.reserve("b", 31), Err(BudgetDenial::Exhausted));
         let raw = serde_json::to_string(&budget).unwrap();
         let mut budget: SessionBudget = serde_json::from_str(&raw).unwrap();
@@ -101,7 +120,10 @@ mod tests {
         assert_eq!(budget.settle("a", 71), Err(BudgetDenial::AboveReservation));
         assert_eq!(budget.settle("a", 20), Ok(()));
         assert_eq!(budget.settle("a", 20), Ok(()));
-        assert_eq!(budget.settle("a", 21), Err(BudgetDenial::ConflictingReceipt));
+        assert_eq!(
+            budget.settle("a", 21),
+            Err(BudgetDenial::ConflictingReceipt)
+        );
         assert_eq!(budget.reserve("b", 80), Ok(()));
         assert_eq!(budget.remaining(), Ok(0));
     }
