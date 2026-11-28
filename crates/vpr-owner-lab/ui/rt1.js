@@ -95,6 +95,11 @@
     el("persona-version").value = authorized ? String(ownerSnapshot.persona_version) : "";
     el("copy-invite").disabled = visitorOnly || ownerBusy || !authorized ||
       publication !== "published" || !el("invite-link").value;
+    el("owner-rights-budget").textContent = authorized
+      ? "Записей о правах: " + (ownerSnapshot.representation_rights_count ?? "неизвестно") +
+        " · Остаток бюджета (учётные единицы): " +
+        (ownerSnapshot.budget_remaining_minor_units ?? "не настроен")
+      : "";
     const publicationLabel = {
       private: "закрыта", published: "опубликована",
       paused: "приостановлена", unpublished: "снята с публикации"

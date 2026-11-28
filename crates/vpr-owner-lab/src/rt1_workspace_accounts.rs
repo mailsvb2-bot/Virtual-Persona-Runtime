@@ -53,6 +53,11 @@ fn workspace_status(
         persona_id: persona_id.to_owned(),
         persona_version,
         publication_status,
+        representation_rights_count: workspace.representation_rights.len(),
+        budget_remaining_minor_units: workspace
+            .session_budget
+            .as_ref()
+            .and_then(|budget| budget.remaining().ok()),
     }
 }
 

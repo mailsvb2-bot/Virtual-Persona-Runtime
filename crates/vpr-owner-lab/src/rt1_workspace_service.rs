@@ -20,6 +20,8 @@ pub struct WorkspaceStatus {
     pub persona_id: String,
     pub persona_version: u64,
     pub publication_status: Option<&'static str>,
+    pub representation_rights_count: usize,
+    pub budget_remaining_minor_units: Option<u64>,
 }
 
 /// Server-authenticated owner and exact reviewed Persona for one visitor.

@@ -1,5 +1,7 @@
 pub mod publication_access;
 pub mod publication_lifecycle;
+pub mod representation_rights;
+pub mod session_budget;
 
 use std::collections::BTreeSet;
 use vpr_domain::{AuthorizationEpoch, AuthorizationEpochExhausted};
