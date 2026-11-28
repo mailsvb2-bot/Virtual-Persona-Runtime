@@ -49,7 +49,9 @@ impl SessionBudget {
             sum.checked_add(entry.confirmed.unwrap_or(entry.maximum))
                 .ok_or(BudgetDenial::InvalidLedger)
         })?;
-        self.limit.checked_sub(used).ok_or(BudgetDenial::InvalidLedger)
+        self.limit
+            .checked_sub(used)
+            .ok_or(BudgetDenial::InvalidLedger)
     }
 
     /// Reserve once; a repeated key never authorizes another external effect.
