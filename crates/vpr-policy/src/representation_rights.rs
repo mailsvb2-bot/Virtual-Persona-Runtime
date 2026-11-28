@@ -89,7 +89,10 @@ impl RepresentationGrant {
         if self.revoked {
             return Err(RightsDenial::Revoked);
         }
-        if self.expires_at_millis.is_some_and(|expiry| request.now_millis >= expiry) {
+        if self
+            .expires_at_millis
+            .is_some_and(|expiry| request.now_millis >= expiry)
+        {
             return Err(RightsDenial::Expired);
         }
         if !self.uses.contains(&request.usage) {
@@ -99,7 +102,9 @@ impl RepresentationGrant {
             return Err(RightsDenial::CommercialDenied);
         }
         if let Some(territories) = &self.territories
-            && !request.territory.is_some_and(|territory| territories.contains(territory))
+            && !request
+                .territory
+                .is_some_and(|territory| territories.contains(territory))
         {
             return Err(RightsDenial::TerritoryDenied);
         }
@@ -138,13 +143,22 @@ mod tests {
         };
         assert_eq!(grant.authorize(&request), Ok(()));
         request.owner_id = "owner-b";
-        assert_eq!(grant.authorize(&request), Err(RightsDenial::IdentityMismatch));
+        assert_eq!(
+            grant.authorize(&request),
+            Err(RightsDenial::IdentityMismatch)
+        );
         request.owner_id = "owner-a";
         request.commercial = true;
-        assert_eq!(grant.authorize(&request), Err(RightsDenial::CommercialDenied));
+        assert_eq!(
+            grant.authorize(&request),
+            Err(RightsDenial::CommercialDenied)
+        );
         request.commercial = false;
         request.territory = None;
-        assert_eq!(grant.authorize(&request), Err(RightsDenial::TerritoryDenied));
+        assert_eq!(
+            grant.authorize(&request),
+            Err(RightsDenial::TerritoryDenied)
+        );
         request.territory = Some("SE");
         request.now_millis = 100;
         assert_eq!(grant.authorize(&request), Err(RightsDenial::Expired));
